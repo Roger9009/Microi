@@ -1,0 +1,57 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- dotnet build -c Release -->
+    <!-- 若升级此类库版本号，必须同时升级Microi.net版本号 -->
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <OutputType>Library</OutputType>
+    <Authors>Microi</Authors>
+    <Company>www.microi.net</Company>
+    <Description>开源低代码平台-Microi吾码，V8引擎注入。此类库开源，官网：https://microi.net</Description>
+    <Copyright>Copyright 2009-2026 microi.net</Copyright>
+    <PackageProjectUrl>https://www.microi.net</PackageProjectUrl>
+    <PackageIcon>microi-blue-256.png</PackageIcon>
+    <PackageTags>低代码,LowCode,V8,V8引擎,JavaScript,Microi吾码,Microi,Microi.net,iTdos,MicroiOS,Dos,Dos.ORM</PackageTags>
+    <PackageReleaseNotes>开源低代码平台-Microi吾码，V8引擎注入。此类库开源，官网：https://microi.net</PackageReleaseNotes>
+    <Version>5.7.6</Version>
+    <AssemblyVersion>5.7.6</AssemblyVersion>
+    <FileVersion>5.7.6</FileVersion>
+    <RestorePackages>true</RestorePackages>
+    <IsPackable>true</IsPackable>
+    <Configurations>Release;Debug</Configurations>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'">
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Dos.Common/Dos.Common.csproj" />
+    <ProjectReference Include="../Microi.Core/Microi.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AlibabaCloud.SDK.Alidns20150109" Version="3.5.8" />
+    <PackageReference Include="AlibabaCloud.SDK.ESA20240910" Version="2.33.3" />
+    <PackageReference Include="AlipaySDKNet.OpenAPI" Version="2.4.0" />
+    <PackageReference Include="AlipaySDKNet.Standard" Version="4.9.448" />
+    <!-- 使用 Portable.BouncyCastle 1.9.0 解决版本冲突 -->
+    <PackageReference Include="Portable.BouncyCastle" Version="1.9.0" />
+    <!-- 排除传递依赖引入的新版 BouncyCastle -->
+    <PackageReference Include="BouncyCastle.Cryptography" Version="2.3.1">
+      <ExcludeAssets>all</ExcludeAssets>
+    </PackageReference>
+    <!-- DWG/DXF 文件处理库 -->
+    <PackageReference Include="ACadSharp" Version="3.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Resource\microi-blue-256.png">
+      <Pack>True</Pack>
+      <PackagePath></PackagePath>
+    </None>
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,57 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- dotnet build -c Release -->
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <OutputType>Library</OutputType>
+    <Authors>Microi</Authors>
+    <Company>www.microi.net</Company>
+    <Description>开源低代码平台-Microi吾码，服务器端自动升级程序。此类库开源，官网：https://microi.net</Description>
+    <Copyright>Copyright 2009-2026 microi.net</Copyright>
+    <PackageProjectUrl>https://www.microi.net</PackageProjectUrl>
+    <PackageIcon>microi-blue-256.png</PackageIcon>
+    <PackageTags>低代码,LowCode,V8,V8引擎,JavaScript,Microi吾码,Microi,Microi.net,iTdos,MicroiOS,Dos,Dos.ORM</PackageTags>
+    <PackageReleaseNotes>开源低代码平台-Microi吾码，服务器端自动升级程序。此类库开源，官网：https://microi.net</PackageReleaseNotes>
+    <Version>5.7.6</Version>
+    <AssemblyVersion>5.7.6</AssemblyVersion>
+    <FileVersion>5.7.6</FileVersion>
+    <RestorePackages>true</RestorePackages>
+    <IsPackable>true</IsPackable>
+    <Configurations>Release;Debug</Configurations>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'">
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <UserSecretsId>d9ed84cc-58cb-4d25-941e-5f764b2198be</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Dos.Common/Dos.Common.csproj" />
+    <ProjectReference Include="../Microi.Core/Microi.Core.csproj" />
+  </ItemGroup>
+
+  <!-- 智能引用 Microi.net：本地存在用ProjectReference，否则用PackageReference -->
+  <ItemGroup Condition="'$(MicroiNetExists)' == 'true'">
+    <ProjectReference Include="..\Microi.net\Microi.net.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(MicroiNetExists)' != 'true'">
+    <PackageReference Include="Microi.net" Version="$(MicroiNetVersion)" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Resource\microi-blue-256.png">
+      <Pack>True</Pack>
+      <PackagePath></PackagePath>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resource\import-package.js" />
+    <EmbeddedResource Include="Resource\app.microi.store.json" />
+    <EmbeddedResource Include="Resource\app.microi.module-engine.json" />
+    <EmbeddedResource Include="Resource\app.microi.form-engine.json" />
+  </ItemGroup>
+
+</Project>

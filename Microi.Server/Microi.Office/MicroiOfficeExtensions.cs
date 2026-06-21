@@ -1,0 +1,23 @@
+using System;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace Microi.net
+{
+    public static class MicroiOfficeExtensions
+    {
+        public static IServiceCollection AddMicroiOffice(this IServiceCollection services)
+        {
+            try
+            {
+                services.AddSingleton<IMicroiOffice, MicroiOffice>();
+                Console.WriteLine($"Microi：【✅成功】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】注入【Office引擎】插件成功！");
+                return services;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Microi：【❌Error】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】注入【Office引擎】插件失败：{ex.Message}");
+                return services;
+            }
+        }
+    }
+}

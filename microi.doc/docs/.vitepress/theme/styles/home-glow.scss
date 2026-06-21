@@ -1,0 +1,482 @@
+// 首页强制深色背景
+.Layout.VPHomeLayout,
+.VPHome,
+div[class*="VPHome"] {
+  position: relative;
+  
+  // 深色背景基调（不是纯黑）
+  &::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(135deg, #0a0a14 0%, #1a1a2e 50%, #0a0a14 100%);
+    z-index: -2;
+  }
+  
+  // 确保首页内容在光晕层之上
+  .container {
+    position: relative;
+    z-index: 10;
+  }
+}
+
+// 强制首页文字颜色为浅色（深色风格）
+.Layout.VPHomeLayout,
+.VPHome,
+div[class*="VPHome"] {
+  color: #e0e0e0 !important;
+  
+  // 所有可能的文字元素
+  *:not(.VPImage):not(img) {
+    color: inherit !important;
+  }
+  
+  .VPHero.has-image .name{
+    margin : 0;
+  }
+
+  .name,
+  .text,
+  .tagline,
+  .title,
+  .details,
+  p,
+  span,
+  a,
+  h1, h2, h3, h4, h5, h6,
+  .VPHero .name,
+  .VPHero .text,
+  .VPHero .tagline,
+  .VPFeature .title,
+  .VPFeature .details {
+    color: #e0e0e0 !important;
+  }
+  
+  // Hero 区域特殊处理
+  // Hero 区域特殊处理
+  .VPHero {
+    .name {
+      color: #ffffff !important;
+      // 当3D标题注入后，隐藏原始clip文字
+      &[data-injected3d] {
+        .clip {
+          -webkit-text-fill-color: transparent !important;
+          background: none !important;
+        }
+      }
+    }
+    
+    .text {
+      color: rgba(220, 220, 240, 0.95) !important;
+    }
+    
+    .tagline {
+      color: rgba(200, 200, 220, 0.9) !important;
+    }
+  }
+  
+  // 特色卡片标题渐变效果保持
+  .VPFeature .title {
+    background: linear-gradient(135deg, #8a2be2 0%, #00bfff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: #fff !important;
+    background-clip: text;
+    color: #fff;
+  }
+}
+
+// 强制首页导航栏文字为白色
+body:has(.VPHome) {
+  // 导航栏 - 永久透明背景
+  .VPNavBar:not(.home.top) {
+    background-color: rgba(10, 10, 20, 0.9) !important;
+  }
+  .VPNavBar,
+  .VPNav {
+    backdrop-filter: none !important;
+    border-bottom: none !important;
+    box-shadow: none !important;
+    
+    &::after {
+      display: none !important; // 去掉底部白条
+    }
+    
+    .title,
+    .VPNavBarTitle,
+    .VPLink,
+    a {
+      color: #ffffff !important;
+    }
+    .VPNavBar .divider:not(.home.top){
+        background-color: transparent !important;
+        .divider-line{
+            background-color: transparent !important;
+        }
+    }
+  }
+  
+  // 搜索框
+  .DocSearch,
+  .VPNavBarSearch,
+  .DocSearch-Button {
+    background-color: rgba(30, 30, 45, 0.9) !important;
+    color: #e0e0e0 !important;
+    
+    .DocSearch-Button-Placeholder,
+    .DocSearch-Search-Icon {
+      color: #e0e0e0 !important;
+    }
+  }
+  .VPNavBarSearch{
+    background-color: transparent !important;
+  }
+  
+  // 底部 MIT License
+  .VPFooter {
+    border-top: none !important;
+    background-color: rgba(10, 10, 20, 0.9) !important;
+    color: #e0e0e0 !important;
+    
+    * {
+      color: #e0e0e0 !important;
+    }
+  }
+  
+  
+  
+  // 弹出菜单
+  .VPMenuGroup,
+  .VPMenuLink {
+    color: #e0e0e0 !important;
+    
+    &:hover {
+      background-color: rgba(138, 43, 226, 0.2) !important;
+    }
+  }
+  // 相关链接弹出层
+  .VPSocialLinks,
+  .VPFlyout,
+  .VPMenu {
+    color: #e0e0e0 !important;
+    
+    * {
+      color: #e0e0e0 !important;
+    }
+  }
+  .VPMenu {
+    background-color: rgba(30, 30, 45, 0.95) !important;
+  }
+  
+  
+}
+@media screen and (max-width: 767px){
+    body:has(.VPHome) .DocSearch-Button{
+        background-color: transparent !important;
+    }
+    body:has(.VPHome) .VPNavBar.screen-open .title, 
+    body:has(.VPHome) .VPNavBar.screen-open .VPNavBarTitle, 
+    body:has(.VPHome) .VPNavBar.screen-open .VPLink, 
+    body:has(.VPHome) .VPNavBar.screen-open a, 
+    body:has(.VPHome) .VPNav.VPNavBar.screen-open .title, 
+    body:has(.VPHome) .VPNav.VPNavBar.screen-open .VPNavBarTitle, 
+    body:has(.VPHome) .VPNav .VPLink, 
+    body:has(.VPHome) .VPNav a,
+    body:has(.VPHome) .VPNavBar.screen-open .DocSearch .DocSearch-Button-Placeholder, 
+    body:has(.VPHome) .VPNavBar.screen-open .DocSearch .DocSearch-Search-Icon, 
+    body:has(.VPHome) .VPNavBar.screen-open .VPNavBarSearch .DocSearch-Button-Placeholder, 
+    body:has(.VPHome)  .VPNavBar.screen-open.VPNavBarSearch .DocSearch-Search-Icon, 
+    body:has(.VPHome) .VPNavBar.screen-open .DocSearch-Button .DocSearch-Button-Placeholder, 
+    body:has(.VPHome) .VPNavBar.screen-open .DocSearch-Button .DocSearch-Search-Icon{
+        color: var(--vp-c-text-1) !important;
+    }
+    body:has(.VPHome) .VPNavBarHamburger.active .container{
+        .top,
+        .middle,
+        .bottom{
+            background-color : var(--vp-c-text-2) !important;
+        }
+    }
+    body:has(.VPHome) .VPNavBarHamburger .container{
+        .top,
+        .middle,
+        .bottom{
+            background-color : #fff !important;
+        }
+    }
+}
+
+// 强制首页导航栏文字为白色 --结束
+
+// 增强 Hero 区域的视觉效果
+.VPHero {
+  .name {
+    color: #ffffff !important;
+    height: 64px;
+  }
+  
+  .text {
+    color: rgba(220, 220, 240, 0.95) !important;
+  }
+  
+  .tagline {
+    color: rgba(200, 200, 220, 0.9) !important;
+  }
+}
+
+// 特色卡片增强
+.VPFeature {
+  position: relative;
+  background: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.10) !important;
+  backdrop-filter: blur(16px) saturate(160%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(160%) !important;
+  transform: translateY(0) !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+  transition: transform 0.45s ease-out,
+              box-shadow 0.45s ease-out,
+              border-color 0.45s ease-out,
+              background 0.45s ease-out,
+              backdrop-filter 0.45s ease-out !important;
+  overflow: hidden;
+  
+  // 光晕层
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(circle at 50% 0%, rgba(138, 43, 226, 0.12) 0%, transparent 70%);
+    opacity: 0;
+    transition: opacity 0.45s ease-out;
+    pointer-events: none;
+    z-index: 0;
+  }
+  
+  &:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border-color: rgba(138, 43, 226, 0.45) !important;
+    backdrop-filter: blur(20px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(180%) !important;
+    transform: translateY(-8px) !important;
+    box-shadow: 0 20px 50px rgba(138, 43, 226, 0.25), 0 4px 24px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
+    
+    &::after {
+      opacity: 1;
+    }
+  }
+  
+  .icon {
+    font-size: 2rem;
+    filter: drop-shadow(0 4px 20px rgba(138, 43, 226, 0.5));
+    transform: scale(1) rotate(0deg);
+    transition: transform 0.45s ease-out;
+  }
+  
+  &:hover .icon {
+    transform: scale(1.1) rotate(5deg);
+  }
+  
+  .title {
+    background: linear-gradient(135deg, #8a2be2 0%, #00bfff 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    font-weight: 600;
+  }
+  
+  .details {
+    color: rgba(200, 200, 220, 0.85) !important;
+  }
+  
+  .link-text {
+    color: rgba(138, 43, 226, 0.9) !important;
+    transition: all 0.3s ease;
+    
+    &:hover {
+      color: rgba(0, 191, 255, 0.9) !important;
+      transform: translateX(5px);
+    }
+  }
+}
+
+// 按钮光效动画
+@keyframes btn-shimmer {
+  0% { left: -100%; }
+  100% { left: 200%; }
+}
+
+@keyframes btn-pulse-blue {
+  0%, 100% { box-shadow: 0 4px 20px rgba(0, 150, 255, 0.4), 0 0 0 0 rgba(0, 150, 255, 0.3); }
+  50% { box-shadow: 0 4px 25px rgba(0, 150, 255, 0.6), 0 0 20px 3px rgba(0, 150, 255, 0.15); }
+}
+
+@keyframes btn-pulse-purple {
+  0%, 100% { box-shadow: 0 4px 20px rgba(138, 43, 226, 0.4), 0 0 0 0 rgba(138, 43, 226, 0.3); }
+  50% { box-shadow: 0 4px 25px rgba(138, 43, 226, 0.6), 0 0 20px 3px rgba(138, 43, 226, 0.15); }
+}
+
+@keyframes btn-pulse-orange {
+  0%, 100% { box-shadow: 0 4px 20px rgba(255, 120, 0, 0.4), 0 0 0 0 rgba(255, 120, 0, 0.3); }
+  50% { box-shadow: 0 4px 25px rgba(255, 120, 0, 0.6), 0 0 20px 3px rgba(255, 120, 0, 0.15); }
+}
+
+@keyframes btn-pulse-green {
+  0%, 100% { box-shadow: 0 4px 20px rgba(0, 210, 106, 0.4), 0 0 0 0 rgba(0, 210, 106, 0.3); }
+  50% { box-shadow: 0 4px 25px rgba(0, 210, 106, 0.6), 0 0 20px 3px rgba(0, 210, 106, 0.15); }
+}
+
+@keyframes btn-border-rotate {
+  0% { --angle: 0deg; }
+  100% { --angle: 360deg; }
+}
+
+// 按钮增强 —— 通用基础
+.VPButton {
+  position: relative;
+  overflow: hidden;
+  transform: translateY(0);
+  transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
+              box-shadow 0.4s ease-out,
+              filter 0.4s ease-out !important;
+
+  // 扫光层
+  &::after {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -100%;
+    width: 60%;
+    height: 200%;
+    background: linear-gradient(
+      105deg,
+      transparent 30%,
+      rgba(255, 255, 255, 0.25) 50%,
+      transparent 70%
+    );
+    pointer-events: none;
+    transition: none;
+  }
+
+  &:hover::after {
+    animation: btn-shimmer 0.7s ease-out forwards;
+  }
+}
+
+// 4 个按钮独立配色（通过 nth-child 选择器）
+.VPHero .actions {
+  // —— 第1个按钮：电光蓝 ——
+  .action:nth-child(1) .VPButton {
+    background: linear-gradient(135deg, #0096ff 0%, #00d4ff 100%) !important;
+    border: 1px solid rgba(0, 180, 255, 0.6) !important;
+    color: #fff !important;
+    -webkit-text-fill-color: #fff !important;
+    animation: btn-pulse-blue 3s ease-in-out infinite;
+
+    &:hover {
+      transform: translateY(-5px) scale(1.06) !important;
+      box-shadow: 0 12px 40px rgba(0, 150, 255, 0.55),
+                  0 0 60px rgba(0, 210, 255, 0.25) !important;
+      filter: brightness(1.15);
+      animation: none;
+    }
+  }
+
+  // —— 第2个按钮：霓虹紫 ——
+  .action:nth-child(2) .VPButton {
+    background: linear-gradient(135deg, #8a2be2 0%, #c850c0 100%) !important;
+    border: 1px solid rgba(168, 50, 200, 0.6) !important;
+    color: #fff !important;
+    -webkit-text-fill-color: #fff !important;
+    animation: btn-pulse-purple 3s ease-in-out infinite 0.5s;
+
+    &:hover {
+      transform: translateY(-5px) scale(1.06) !important;
+      box-shadow: 0 12px 40px rgba(138, 43, 226, 0.55),
+                  0 0 60px rgba(200, 80, 192, 0.25) !important;
+      filter: brightness(1.15);
+      animation: none;
+    }
+  }
+
+  // —— 第3个按钮：烈焰橙 ——
+  .action:nth-child(3) .VPButton {
+    background: linear-gradient(135deg, #ff6a00 0%, #ee0979 100%) !important;
+    border: 1px solid rgba(255, 120, 0, 0.6) !important;
+    color: #fff !important;
+    -webkit-text-fill-color: #fff !important;
+    animation: btn-pulse-orange 3s ease-in-out infinite 1s;
+
+    &:hover {
+      transform: translateY(-5px) scale(1.06) !important;
+      box-shadow: 0 12px 40px rgba(255, 106, 0, 0.55),
+                  0 0 60px rgba(238, 9, 121, 0.25) !important;
+      filter: brightness(1.15);
+      animation: none;
+    }
+  }
+
+  // —— 第4个按钮：翡翠绿 ——
+  .action:nth-child(4) .VPButton {
+    background: linear-gradient(135deg, #00d26a 0%, #00b4d8 100%) !important;
+    border: 1px solid rgba(0, 210, 106, 0.6) !important;
+    color: #fff !important;
+    -webkit-text-fill-color: #fff !important;
+    animation: btn-pulse-green 3s ease-in-out infinite 1.5s;
+
+    &:hover {
+      transform: translateY(-5px) scale(1.06) !important;
+      box-shadow: 0 12px 40px rgba(0, 210, 106, 0.55),
+                  0 0 60px rgba(0, 180, 216, 0.25) !important;
+      filter: brightness(1.15);
+      animation: none;
+    }
+  }
+  // —— 第5个按钮：火热黄 ——
+  .action:nth-child(5) .VPButton {
+    background: linear-gradient(135deg, #ffcc00 0%, #ff9900 100%) !important;
+    border: 1px solid rgba(255, 204, 0, 0.6) !important;
+    color: #000 !important;
+    -webkit-text-fill-color: #000 !important;
+    animation: btn-pulse-yellow 3s ease-in-out infinite 1.5s;
+
+    &:hover {
+      transform: translateY(-5px) scale(1.06) !important;
+      box-shadow: 0 12px 40px rgba(255, 204, 0, 0.55),
+                  0 0 60px rgba(255, 153, 0, 0.25) !important;
+      filter: brightness(1.15);
+      animation: none;
+    }
+  }
+}
+
+// 鼠标悬停图片时放大背景光晕
+.VPHome .VPHero .image-bg {
+  transition: transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1),
+              filter 0.6s ease,
+              opacity 0.6s ease !important;
+}
+
+.VPHome .VPHero .image:hover ~ .image-bg,
+.VPHome .VPHero .VPImage:hover ~ .image-bg {
+  transform: scale(1.3) !important;
+  filter: blur(80px) !important;
+  opacity: 0.9 !important;
+}
+
+// 响应式调整
+@media (max-width: 768px) {
+  .VPFeature {
+    &:hover {
+      transform: translateY(-5px) !important;
+    }
+  }
+
+  .VPHero .actions .action .VPButton {
+    &:hover {
+      transform: translateY(-3px) scale(1.03) !important;
+    }
+  }
+}

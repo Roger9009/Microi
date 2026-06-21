@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+    <meta charset="utf-8">
+    <meta name="renderer" content="webkit">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, minimum-scale=1, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" id="appleMobileTitle" content="Loading...">
+    <link rel="apple-touch-icon" id="appleTouchIcon" href="/favicon.png">    <!-- 【配置项】请修改为你的实际服务器地址 -->
+    <script>
+        var MICROI_SERVER_URL = 'http://192.168.31.177:1988/?OsClient=iTdos';
+        // 优先读取用户在 APP 内自定义的服务器地址
+        (function() { try { var s = localStorage.getItem('microi_apk_server_url'); if (s) MICROI_SERVER_URL = s; } catch(e) {} })();
+    </script>
+    <title>Loading...</title>
+    <style>
+        /* ========================================================
+         * MCI 设计系统 — Splash Screen 内联版
+         * 参考：microi.skills/ui-design/SKILL.md
+         * 命名前缀：--mci- / .mci-
+         * ======================================================== */
+
+        /* === 主题变量（亮色多彩默认） === */
+        :root[data-theme="light"], :root {
+            --mci-color-primary: #6C2BD9;
+            --mci-color-primary-light: #8B5CF6;
+            --mci-color-primary-glow: rgba(108, 43, 217, 0.2);
+            --mci-color-accent-blue: #2196F3;
+            --mci-color-accent-cyan: #06B6D4;
+            --mci-color-accent-pink: #EC4899;
+            --mci-color-danger: #E8294A;
+
+            --mci-bg-base: #F5F5FA;
+            --mci-bg-elevated: #FFFFFF;
+            --mci-bg-card: rgba(255, 255, 255, 0.92);
+
+            --mci-text-primary: #1A1A2E;
+            --mci-text-secondary: rgba(26, 26, 46, 0.65);
+            --mci-text-tertiary: rgba(26, 26, 46, 0.45);
+            --mci-text-muted: rgba(26, 26, 46, 0.22);
+
+            --mci-border-color: rgba(15, 18, 30, 0.08);
+
+            --mci-gradient-primary: linear-gradient(135deg, #6C2BD9 0%, #2196F3 100%);
+
+            --mci-shadow-button: 0 6px 20px var(--mci-color-primary-glow);
+            --mci-glow-primary: 0 0 24px var(--mci-color-primary-glow),
+                                0 0 60px rgba(33, 150, 243, 0.18);
+
+            --mci-radius-md: 12px;
+            --mci-radius-xl: 20px;
+            --mci-radius-2xl: 24px;
+            --mci-radius-full: 9999px;
+
+            --mci-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+                'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+        }
+
+        /* === 暗黑主题（可选切换） === */
+        :root[data-theme="dark"] {
+            --mci-color-primary: #722BFF;
+            --mci-color-primary-light: #9B5FFF;
+            --mci-color-primary-glow: rgba(114, 43, 255, 0.35);
+            --mci-color-accent-blue: #29B8FF;
+            --mci-color-accent-cyan: #00F5D4;
+            --mci-color-accent-pink: #FF6EC7;
+            --mci-color-danger: #FF2E63;
+
+            --mci-bg-base: #0A0A0F;
+            --mci-bg-elevated: #121218;
+            --mci-bg-card: rgba(255, 255, 255, 0.04);
+
+            --mci-text-primary: #FFFFFF;
+            --mci-text-secondary: rgba(255, 255, 255, 0.55);
+            --mci-text-tertiary: rgba(255, 255, 255, 0.35);
+            --mci-text-muted: rgba(255, 255, 255, 0.18);
+
+            --mci-border-color: rgba(255, 255, 255, 0.08);
+
+            --mci-gradient-primary: linear-gradient(135deg, #722BFF 0%, #29B8FF 100%);
+
+            --mci-shadow-button: 0 4px 16px var(--mci-color-primary-glow);
+            --mci-glow-primary: 0 0 24px rgba(114, 43, 255, 0.5),
+                                0 0 60px rgba(41, 184, 255, 0.18);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            background: var(--mci-bg-base);
+            font-family: var(--mci-font-family);
+            color: var(--mci-text-primary);
+            overflow: hidden;
+            -webkit-text-size-adjust: 100%;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* === 背景装饰：极光光斑 Aurora Orbs（亮色默认较柔） === */
+        body::before, body::after { content: none; } /* 取消旧的 body 伪元素光斑，交由 .mci-aurora 接管 */
+
+        .mci-aurora {
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            z-index: 0;
+            overflow: hidden;
+            contain: strict;
+        }
+        .mci-aurora__orb {
+            position: absolute;
+            border-radius: 50%;
+            filter: blur(60px);
+            opacity: 0.55;
+            will-change: transform;
+            animation: mciAuroraDrift var(--dur, 26s) ease-in-out infinite alternate;
+        }
+        .mci-aurora__orb--1 {
+            width: 520px; height: 520px;
+            top: -120px; left: -100px;
+            background: radial-gradient(circle, var(--mci-color-primary) 0%, transparent 65%);
+            --dur: 22s;
+        }
+        .mci-aurora__orb--2 {
+            width: 460px; height: 460px;
+            top: 28%; right: -140px;
+            background: radial-gradient(circle, var(--mci-color-accent-blue) 0%, transparent 65%);
+            --dur: 28s;
+            animation-delay: -8s;
+        }
+        .mci-aurora__orb--3 {
+            width: 580px; height: 580px;
+            bottom: -180px; left: 18%;
+            background: radial-gradient(circle, var(--mci-color-accent-pink) 0%, transparent 65%);
+            opacity: 0.4;
+            --dur: 32s;
+            animation-delay: -14s;
+        }
+        .mci-aurora__orb--4 {
+            width: 380px; height: 380px;
+            top: 55%; left: -80px;
+            background: radial-gradient(circle, var(--mci-color-accent-cyan) 0%, transparent 65%);
+            opacity: 0.45;
+            --dur: 26s;
+            animation-delay: -4s;
+        }
+        @keyframes mciAuroraDrift {
+            0%   { transform: translate3d(0, 0, 0) scale(1); }
+            50%  { transform: translate3d(40px, -30px, 0) scale(1.08); }
+            100% { transform: translate3d(-30px, 20px, 0) scale(0.95); }
+        }
+        :root[data-theme="dark"] .mci-aurora__orb {
+            opacity: 0.35;
+            filter: blur(80px);
+        }
+        @media (prefers-reduced-motion: reduce) {
+            .mci-aurora__orb { animation: none; }
+        }
+
+        /* === Splash 主容器 === */
+        .mci-splash {
+            position: relative;
+            z-index: 2;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            width: 100%;
+            padding: 40px 30px;
+        }
+
+        /* === Logo 脉冲圆环 === */
+        .mci-logo-ring {
+            position: relative;
+            width: 96px;
+            height: 96px;
+            margin-bottom: 32px;
+        }
+        .mci-logo-ring::before,
+        .mci-logo-ring::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 96px;
+            height: 96px;
+            margin-left: -48px;
+            margin-top: -48px;
+            border-radius: 50%;
+            pointer-events: none;
+        }
+        .mci-logo-ring::before {
+            border: 2px solid var(--mci-color-primary-glow);
+            animation: mciRingPulse 2s ease-out infinite;
+        }
+        .mci-logo-ring::after {
+            border: 1.5px solid var(--mci-color-primary-glow);
+            animation: mciRingPulse 2s ease-out infinite 0.6s;
+            opacity: 0.5;
+        }
+        @keyframes mciRingPulse {
+            0%   { transform: scale(1);    opacity: 1; }
+            100% { transform: scale(1.77); opacity: 0; }
+        }
+        .mci-logo-core {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 80px;
+            height: 80px;
+            background: var(--mci-gradient-primary);
+            border-radius: var(--mci-radius-2xl);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: var(--mci-glow-primary);
+            animation: mciFloat 3s ease-in-out infinite;
+        }
+        @keyframes mciFloat {
+            0%, 100% { transform: translate(-50%, -50%) translateY(0); }
+            50% { transform: translate(-50%, -50%) translateY(-6px); }
+        }
+        .mci-logo-core svg {
+            width: 40px;
+            height: 40px;
+            fill: #fff;
+            filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.25));
+        }
+        .mci-logo-core img {
+            width: 56px;
+            height: 56px;
+            object-fit: contain;
+            border-radius: 8px;
+        }
+        .mci-logo-core.has-custom-logo {
+            background: transparent;
+            box-shadow: none;
+        }
+        .mci-logo-core.has-custom-logo img {
+            width: 72px;
+            height: 72px;
+            border-radius: 16px;
+            filter: drop-shadow(0 6px 20px rgba(0,0,0,0.22)) drop-shadow(0 2px 6px rgba(0,0,0,0.14));
+        }
+
+        /* === 文字区 === */
+        .mci-app-title {
+            font-size: 26px;
+            font-weight: 700;
+            color: var(--mci-text-primary);
+            letter-spacing: 2px;
+            margin-bottom: 8px;
+            background: var(--mci-gradient-primary);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            text-shadow: 0 2px 30px var(--mci-color-primary-glow);
+        }
+        .mci-app-subtitle {
+            font-size: 13px;
+            color: var(--mci-text-tertiary);
+            margin-bottom: 20px;
+            letter-spacing: 1px;
+        }
+
+        /* === 加载百分比 === */
+        .mci-load-percent {
+            font-size: 42px;
+            font-weight: 700;
+            color: var(--mci-text-primary);
+            letter-spacing: 4px;
+            margin-bottom: 12px;
+            text-shadow: 0 2px 20px var(--mci-color-primary-glow);
+            animation: mciPercentPulse 1.5s ease-in-out infinite;
+            min-height: 52px;
+            line-height: 52px;
+            font-variant-numeric: tabular-nums;
+        }
+        @keyframes mciPercentPulse {
+            0%, 100% { opacity: 1; }
+            50%      { opacity: 0.78; }
+        }
+
+        /* === 进度条 === */
+        .mci-progress-wrap {
+            width: 220px;
+            height: 4px;
+            background: var(--mci-bg-card);
+            border-radius: var(--mci-radius-full);
+            overflow: hidden;
+            margin-bottom: 16px;
+            border: 1px solid var(--mci-border-color);
+        }
+        .mci-progress-bar {
+            height: 100%;
+            width: 0%;
+            background: var(--mci-gradient-primary);
+            border-radius: var(--mci-radius-full);
+            transition: width 0.3s ease;
+            box-shadow: 0 0 8px var(--mci-color-primary-glow);
+        }
+
+        /* === 加载信息 === */
+        .mci-load-info {
+            font-size: 12px;
+            color: var(--mci-text-tertiary);
+            margin-bottom: 4px;
+            letter-spacing: 0.5px;
+            min-height: 20px;
+            line-height: 20px;
+            text-align: center;
+        }
+        .mci-load-info--speed {
+            font-size: 13px;
+            color: var(--mci-text-secondary);
+        }
+
+        /* === 圆点加载动画 === */
+        .mci-load-dots {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin: 16px 0 12px;
+        }
+        .mci-load-dots .dot {
+            width: 10px;
+            height: 10px;
+            background: var(--mci-color-primary);
+            border-radius: 50%;
+            animation: mciDotBounce 1.4s ease-in-out infinite both;
+            box-shadow: 0 0 6px var(--mci-color-primary-glow);
+        }
+        .mci-load-dots .dot:nth-child(1) { animation-delay: -0.32s; }
+        .mci-load-dots .dot:nth-child(2) { animation-delay: -0.16s; }
+        .mci-load-dots .dot:nth-child(3) { animation-delay: 0s; }
+        .mci-load-dots .dot:nth-child(4) { animation-delay: 0.16s; }
+        .mci-load-dots .dot:nth-child(5) { animation-delay: 0.32s; }
+        @keyframes mciDotBounce {
+            0%, 80%, 100% { transform: scale(0); opacity: 0.4; }
+            40% { transform: scale(1); opacity: 1; }
+        }
+
+        /* === serverUrl === */
+        .mci-server-url {
+            font-size: 10px;
+            color: var(--mci-text-muted);
+            word-break: break-all;
+            text-align: center;
+            max-width: 85vw;
+            font-family: 'SF Mono', 'Monaco', 'Menlo', 'Consolas', monospace;
+            margin-top: 4px;
+        }
+
+        /* === 错误态 === */
+        .mci-error-panel {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            animation: mciFadeIn 0.4s ease;
+        }
+        @keyframes mciFadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .mci-error-icon {
+            width: 56px;
+            height: 56px;
+            margin-bottom: 16px;
+            border-radius: 50%;
+            background: rgba(255, 46, 99, 0.15);
+            box-shadow: 0 0 24px rgba(255, 46, 99, 0.25);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .mci-error-icon svg {
+            width: 28px;
+            height: 28px;
+            fill: var(--mci-color-danger);
+        }
+        .mci-error-msg {
+            font-size: 14px;
+            color: var(--mci-text-secondary);
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        /* === 按钮（mci-btn） === */
+        .mci-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            padding: 0 36px;
+            background: var(--mci-gradient-primary);
+            color: var(--mci-text-primary);
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+            border-radius: var(--mci-radius-full);
+            cursor: pointer;
+            box-shadow: var(--mci-shadow-button);
+            appearance: none;
+            -webkit-appearance: none;
+            transition: transform 0.15s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+        }
+        .mci-btn:active { transform: scale(0.95); }
+
+        /* === 底部水印 === */
+        .mci-watermark {
+            position: fixed;
+            bottom: calc(20px + env(safe-area-inset-bottom, 0));
+            left: 0;
+            right: 0;
+            text-align: center;
+            font-size: 10px;
+            color: var(--mci-text-muted);
+            z-index: 2;
+        }
+
+        /* === 无障碍 === */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- 极光光斑背景（4 个大尺寸模糊渐变球慢速漂移，纯 GPU，移动端流畅） -->
+    <div class="mci-aurora" aria-hidden="true">
+        <span class="mci-aurora__orb mci-aurora__orb--1"></span>
+        <span class="mci-aurora__orb mci-aurora__orb--2"></span>
+        <span class="mci-aurora__orb mci-aurora__orb--3"></span>
+        <span class="mci-aurora__orb mci-aurora__orb--4"></span>
+    </div>
+
+    <div class="mci-splash" id="splash">
+        <!-- Logo -->
+        <div class="mci-logo-ring">
+            <div class="mci-logo-core" id="logoCore">
+                <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+            </div>
+        </div>
+
+        <!-- 标题 -->
+        <div class="mci-app-title" id="appTitle">Loading...</div>
+        <div class="mci-app-subtitle">正在启动应用</div>
+
+        <!-- 加载百分比 -->
+        <div class="mci-load-percent" id="loadPercent">0%</div>
+
+        <!-- 进度条 -->
+        <div class="mci-progress-wrap" id="progressWrap">
+            <div class="mci-progress-bar" id="progressBar"></div>
+        </div>
+
+        <!-- 圆点动画 -->
+        <div class="mci-load-dots" id="loadDots">
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+            <div class="dot"></div>
+        </div>
+
+        <!-- 服务器地址 -->
+        <div class="mci-server-url" id="serverUrl"></div>
+
+        <!-- 错误面板 -->
+        <div class="mci-error-panel" id="errorPanel">
+            <div class="mci-error-icon">
+                <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></svg>
+            </div>
+            <div class="mci-error-msg" id="errorMsg">网络连接失败</div>
+            <button class="mci-btn" onclick="retryLoad()">重新连接</button>
+        </div>
+    </div>
+
+    <div class="mci-watermark" id="watermark">Powered by Loading...</div>
+
+    <script>
+        /**
+         * Microi吾码 - 5+App (HBuilder APK) 入口
+         *
+         * 【核心架构】: location.replace 直接跳转模式
+         * 不再使用子 WebView，而是将 launcher webview 直接导航到远程地址。
+         * 这样远程页面运行在 launcher webview 中，manifest.json 配置的：
+         *   - plusrequire: 'ahead'         → window.plus 在远程页面可用
+         *   - backButtonAutoControl: 'none' → backbutton 事件正常派发
+         * 从根本上解决了子 WebView 中 backbutton 事件不可靠的问题。
+         *
+         * 返回键处理在 microi.web/index.html 中实现（远程页面自己处理）。
+         */
+
+        // ===== 主题初始化（默认亮色多彩、跟随系统、支持 localStorage 持久化） =====
+        (function() {
+            try {
+                var saved = localStorage.getItem('mci-theme');
+                var prefersDark = window.matchMedia &&
+                    window.matchMedia('(prefers-color-scheme: dark)').matches;
+                document.documentElement.setAttribute('data-theme',
+                    saved || (prefersDark ? 'dark' : 'light')); // 默认 light
+            } catch(e) {}
+        })();
+
+        // ===== 极光光斑背景为纯静态 HTML，无需 JS 生成 =====
+
+        // ===== 读取 SysConfig 缓存，更新标题、公司名和 Logo =====
+        (function() {
+            try {
+                var data = JSON.parse(localStorage.getItem('microi.net') || '{}');
+                var cfg = data.SysConfig;
+                if (cfg) {
+                    if (cfg.SysTitle) {
+                        document.title = cfg.SysTitle;
+                        var t = document.getElementById('appTitle');
+                        if (t) t.textContent = cfg.SysTitle;
+                        var amwat = document.getElementById('appleMobileTitle');
+                        if (amwat) amwat.setAttribute('content', cfg.SysTitle);
+                    }
+                    if (cfg.CompanyName) {
+                        var w = document.getElementById('watermark');
+                        if (w) w.textContent = 'Powered by ' + cfg.CompanyName;
+                    }
+                    if (cfg.SysLogo) {
+                        var fileServer = (cfg.FileServer || '').replace(/\/+$/, '');
+                        var sysLogo = cfg.SysLogo;
+                        var logoUrl = '';
+                        try {
+                            // toUrl: 路径已是绝对 URL 则直接返回，否则拼接 fileServer
+                            var toUrl = function(p) { return (p && p.indexOf('http') === 0) ? p : (fileServer + (p || '')); };
+                            if (typeof sysLogo === 'object' && sysLogo !== null) {
+                                logoUrl = toUrl(sysLogo.Path || sysLogo.path || '');
+                            } else {
+                                var s = String(sysLogo);
+                                if (s.indexOf('http') === 0) {
+                                    logoUrl = s;
+                                } else if (s.charAt(0) === '{') {
+                                    var obj = JSON.parse(s); logoUrl = toUrl(obj.Path || obj.path || '');
+                                } else if (s.charAt(0) === '[') {
+                                    var arr = JSON.parse(s); logoUrl = arr.length > 0 ? toUrl(arr[0].Path || arr[0].path || '') : '';
+                                } else {
+                                    logoUrl = fileServer + s;
+                                }
+                            }
+                        } catch (e) { logoUrl = ''; }
+                        if (logoUrl) {
+                            var lc = document.getElementById('logoCore');
+                            if (lc) {
+                                lc.innerHTML = '<img src="' + logoUrl + '" alt="Logo">';
+                                lc.classList.add('has-custom-logo');
+                            }
+                            var ati = document.getElementById('appleTouchIcon');
+                            if (ati) ati.setAttribute('href', logoUrl);
+                        }
+                    }
+                }
+            } catch(e) {}
+        })();
+
+        // ===== 配置 =====
+        var APP_CONFIG = {
+            serverUrl: MICROI_SERVER_URL,
+            plusReadyTimeout: 5000
+        };
+
+        var _state = { plusReady: false, redirected: false, retryCount: 0 };
+
+        function _log(msg) { console.log('[MCI Splash] ' + msg); }
+
+        // ===== 显示 serverUrl =====
+        (function() {
+            try { document.getElementById('serverUrl').textContent = APP_CONFIG.serverUrl; } catch(e) {}
+        })();
+
+        // ===== 模拟加载进度动画 =====
+        // 真实的资源加载发生在 location.replace 之后，
+        // 此处通过模拟进度给用户视觉反馈
+        var _loadAnim = (function() {
+            var percentEl = document.getElementById('loadPercent');
+            var barEl = document.getElementById('progressBar');
+            var percent = 0;
+            var timer = null;
+            var running = false;
+
+            function tick() {
+                if (percent < 10) percent += Math.random() * 3 + 1;
+                else if (percent < 20) percent += Math.random() * 1.5 + 0.3;
+                if (percent > 20) percent = 20;
+                var p = Math.floor(percent);
+                if (percentEl) percentEl.textContent = p + '%';
+                if (barEl) barEl.style.width = p + '%';
+            }
+
+            return {
+                start: function() {
+                    if (running) return;
+                    running = true;
+                    timer = setInterval(tick, 200);
+                },
+                finish: function() {
+                    clearInterval(timer); running = false;
+                    percent = 100;
+                    if (percentEl) percentEl.textContent = '100%';
+                    if (barEl) barEl.style.width = '100%';
+                },
+                stop: function() {
+                    clearInterval(timer); running = false;
+                },
+                reset: function() {
+                    clearInterval(timer); running = false;
+                    percent = 0;
+                    if (percentEl) percentEl.textContent = '0%';
+                    if (barEl) barEl.style.width = '0%';
+                }
+            };
+        })();
+
+        // ===== UI 控制 =====
+        function _updateStatus(text) {
+            try { document.getElementById('loadSpeed').textContent = text; } catch(e) {}
+        }
+
+        function _showError(msg) {
+            _loadAnim.stop();
+            try {
+                document.getElementById('progressWrap').style.display = 'none';
+                document.getElementById('loadPercent').style.display = 'none';
+                document.getElementById('loadDots').style.display = 'none';
+                document.getElementById('errorMsg').textContent = msg || '网络连接失败';
+                document.getElementById('errorPanel').style.display = 'flex';
+            } catch(e) {}
+        }
+
+        function _resetUI() {
+            _loadAnim.reset();
+            try {
+                document.getElementById('progressWrap').style.display = '';
+                document.getElementById('loadPercent').style.display = '';
+                document.getElementById('loadDots').style.display = '';
+                document.getElementById('errorPanel').style.display = 'none';
+            } catch(e) {}
+        }
+
+        // ===== 检测网络 =====
+        function _checkNetwork() {
+            try {
+                if (window.plus && plus.networkinfo) {
+                    var t = plus.networkinfo.getCurrentType();
+                    if (t === 0 || t === plus.networkinfo.CONNECTION_NONE) return false;
+                }
+            } catch(e) {}
+            return true;
+        }
+
+        // ===== 核心：跳转到远程页面 =====
+        function navigateToApp() {
+            if (_state.redirected) return;
+            _state.redirected = true;
+            _log('跳转到: ' + APP_CONFIG.serverUrl);
+            _loadAnim.stop();
+            try {
+                document.getElementById('loadPercent').textContent = '20%';
+                document.getElementById('progressBar').style.width = '20%';
+                document.getElementById('loadSpeed').textContent = '正在进入应用...';
+            } catch(e) {}
+            setTimeout(function() {
+                location.replace(APP_CONFIG.serverUrl);
+            }, 300);
+        }
+
+        // ===== 重试 =====
+        function retryLoad() {
+            _state.redirected = false;
+            _resetUI();
+            setTimeout(function() { navigateToApp(); }, 500);
+        }
+
+        // ===== 启动加载 =====
+        function startLoad() {
+            if (!_checkNetwork()) {
+                _showError('无网络连接，请检查网络设置');
+                return;
+            }
+            _updateStatus('正在连接服务器...');
+            _loadAnim.start();
+            setTimeout(function() {
+                navigateToApp();
+            }, 800);
+        }
+
+        // ===== 初始化 5+App =====
+        function initApp() {
+            if (_state.plusReady) return;
+            _state.plusReady = true;
+
+            try { _log('initApp, OS=' + plus.os.name); } catch(e) {}
+
+            try { plus.navigator.closeSplashscreen(); } catch(e) {}
+            try {
+                plus.navigator.setStatusBarStyle('light');
+                plus.navigator.setStatusBarBackground('#0A0A0F');
+            } catch(e) {}
+
+            startLoad();
+        }
+
+        // ===== 多层启动兜底 =====
+        document.addEventListener('plusready', function() {
+            _log('plusready');
+            initApp();
+        }, false);
+
+        setTimeout(function() {
+            if (!_state.plusReady && typeof window.plus === 'object') {
+                _log('plus 已存在，主动初始化');
+                initApp();
+            }
+        }, 300);
+
+        setTimeout(function() {
+            if (!_state.plusReady) {
+                if (typeof window.plus === 'object') {
+                    initApp();
+                } else {
+                    _log('非 5+App 环境，直接跳转');
+                    navigateToApp();
+                }
+            }
+        }, APP_CONFIG.plusReadyTimeout);
+
+        // ===== Android 返回键处理（仅在 loading 页面生效） =====
+        try {
+            plus.key.addEventListener('backbutton', function() {
+                try { plus.runtime.quit(); } catch(e) {}
+            }, false);
+        } catch(e) {}
+        document.addEventListener('backbutton', function() {
+            try { plus.runtime.quit(); } catch(e) {}
+        }, false);
+    </script>
+</body>
+</html>

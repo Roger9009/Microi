@@ -1,0 +1,64 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <OutputType>Library</OutputType>
+    <Authors>Microi</Authors>
+    <Company>www.microi.net</Company>
+    <Description>开源低代码平台 - Microi吾码：微信平台相关功能依赖注入。此类库开源，官网：https://microi.net</Description>
+    <Copyright>Copyright 2009-2026 microi.net</Copyright>
+    <PackageProjectUrl>https://www.microi.net</PackageProjectUrl>
+    <PackageIcon>microi-blue-256.png</PackageIcon>
+    <PackageTags>低代码,LowCode,V8,V8引擎,JavaScript,Microi吾码,Microi,Microi.net,iTdos,MicroiOS,Dos,Dos.ORM</PackageTags>
+    <PackageReleaseNotes>开源低代码平台 - Microi吾码：微信平台相关功能依赖注入。此类库开源，官网：https://microi.net</PackageReleaseNotes>
+    <Version>5.7.6</Version>
+    <AssemblyVersion>5.7.6</AssemblyVersion>
+    <FileVersion>5.7.6</FileVersion>
+    <RestorePackages>true</RestorePackages>
+    <IsPackable>true</IsPackable>
+    <Configurations>Release;Debug</Configurations>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'">
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DocumentationFile>bin\Release\netstandard2.0\Microi.WeChat.xml</DocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Senparc.Weixin.MP" Version="16.23.6" />
+    <PackageReference Include="Senparc.Weixin.AspNet" Version="1.4.7" />
+    <PackageReference Include="Senparc.CO2NET.Cache.Redis" Version="4.2.6" />
+    <PackageReference Include="Senparc.Weixin.Cache.Redis" Version="2.15.6" />
+    <PackageReference Include="Senparc.Weixin.TenPayV3" Version="1.7.8" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Remove="Resource\" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Resource\microi-blue-256.png">
+      <Pack>True</Pack>
+      <PackagePath></PackagePath>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="Resource\" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Microi.Core/Microi.Core.csproj" />
+    <ProjectReference Include="..\Dos.Common\Dos.Common.csproj" />
+  </ItemGroup>
+  
+  <!-- 智能引用 Microi.net：本地存在用ProjectReference，否则用PackageReference -->
+  <ItemGroup Condition="'$(MicroiNetExists)' == 'true'">
+    <ProjectReference Include="..\Microi.net\Microi.net.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(MicroiNetExists)' != 'true'">
+    <PackageReference Include="Microi.net" Version="$(MicroiNetVersion)" />
+  </ItemGroup>
+</Project>

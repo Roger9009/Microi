@@ -1,0 +1,490 @@
+﻿//【MacOS VS Code】折叠代码快捷键：【command + K + 0】
+
+#region using
+using System.Text;
+using System.Diagnostics;
+using Dos.Common;
+using Microi.net;
+using Microi.net.Api;
+using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.OpenApi.Models;
+using Newtonsoft.Json.Serialization;
+using Senparc.CO2NET;
+using Senparc.Weixin.AspNet;
+using Senparc.Weixin.RegisterServices;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Newtonsoft.Json;
+using Microsoft.AspNetCore.Hosting.StaticWebAssets;
+using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.Cors.Infrastructure;
+using StackExchange.Redis;
+using Newtonsoft.Json.Linq;
+#endregion
+
+// 调试/集成终端下中文与 emoji 输出更稳定（Windows 默认代码页易导致乱码）
+Console.OutputEncoding = Encoding.UTF8;
+Console.InputEncoding = Encoding.UTF8;
+
+// ⚙️ 注册Console输出拦截器，捕获所有Console.WriteLine到内存环形缓冲区（用于系统监控-应用日志）
+Console.SetOut(new Microi.net.ConsoleLogInterceptor(Console.Out));
+
+// ⚙️ 启用gRPC over HTTP/2（非TLS）支持 - 必须在最开始设置！
+// 用于Qdrant向量数据库的gRPC连接（允许HTTP协议使用HTTP/2）
+AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+// 额外配置：允许不安全的HTTP连接使用HTTP/2
+Environment.SetEnvironmentVariable("DOTNET_SYSTEM_NET_HTTP_SOCKETSHTTPHANDLER_HTTP2SUPPORT", "1");
+
+Console.WriteLine($"Microi：【✅成功】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】HTTP/2非加密支持已启用");
+
+// 🔧 本地环境快速切换：读取 .microi-local 文件（已加入 .gitignore，每位开发者本地独立配置）
+// 优先级：IDE 环境变量（launch.json env / launchSettings.json）> .microi-local > 系统环境变量
+// 切换方式：编辑 Microi.Server/Microi.net.Api/.microi-local，写入环境名（如 iTdos / renyiPro）
+//           或执行 PowerShell：.\switch-env.ps1 renyiPro
+if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")))
+{
+    // 依次查找：cwd（dotnet run / F5 调试 cwd）→ bin/Debug/net10.0 上三级（项目根）
+    var localEnvFile = new[]
+    {
+        Path.Combine(Directory.GetCurrentDirectory(), ".microi-local"),
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".microi-local")
+    }.FirstOrDefault(File.Exists);
+    if (localEnvFile != null)
+    {
+        var localEnv = File.ReadAllText(localEnvFile).Trim();
+        if (!string.IsNullOrEmpty(localEnv))
+        {
+            Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", localEnv);
+            Environment.SetEnvironmentVariable("DOTNET_ENVIRONMENT", localEnv);
+            Console.WriteLine($"Microi：【🔧本地环境】已从 .microi-local 加载：{localEnv}");
+        }
+    }
+}
+
+var builder = WebApplication.CreateBuilder(args);
+Console.WriteLine(
+    $"Microi：【诊断】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】EnvironmentName={builder.Environment.EnvironmentName}，" +
+    "ASPNETCORE_ENVIRONMENT=" + (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "(null)") + "，" +
+    "DOTNET_ENVIRONMENT=" + (Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") ?? "(null)"));
+
+#region Microi.net 初始化
+StaticWebAssetsLoader.UseStaticWebAssets(builder.Environment, builder.Configuration);
+// ------- 文件上传大小限制 -------
+//USE LINUX【发布到Linux使用以下代码】
+builder.WebHost.UseKestrel((host, options) =>
+{
+    // Long-running V8/API engine requests should not be aborted by Kestrel while business logic is still executing.
+    // Kestrel has no request-processing timeout by default; disable data-rate timeouts for slow request/response streams.
+    options.Limits.MinRequestBodyDataRate = null;
+    options.Limits.MinResponseDataRate = null;
+    options.Limits.MaxRequestLineSize = int.MaxValue;//HTTP 请求行的最大允许大小。 默认为 8kb
+    options.Limits.MaxRequestBufferSize = int.MaxValue;//请求缓冲区的最大大小。 默认为 1M
+    options.Limits.MaxRequestBodySize = long.MaxValue;//任何请求正文的最大允许大小（以字节为单位）,默认 30,000,000 字节，大约为 28.6MB
+});
+//USE IIS【发布到Windows IIS使用以下代码】
+//builder.WebHost.UseIISIntegration();
+var services = builder.Services;
+services.Configure<FormOptions>(options =>
+{
+    options.ValueLengthLimit = int.MaxValue;
+    options.MultipartBodyLengthLimit = long.MaxValue;
+});
+Console.WriteLine($"------------------------------------------------------------------------------");
+Console.WriteLine($"------------------------------------------------------------------------------");
+Console.WriteLine($"Microi：【✅成功】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】开始初始化！");
+Stopwatch timer = new Stopwatch();
+timer.Start();
+var dbConn = Environment.GetEnvironmentVariable("OsClientDbConn", EnvironmentVariableTarget.Process) ?? ConfigHelper.GetAppSettings("OsClientDbConn") ?? "";
+var microiNetDllVersion = "";
+try
+{
+    var filePath = Path.Combine(AppContext.BaseDirectory, "Microi.net.dll");
+    var filePath2 = (Debugger.IsAttached ? ConfigHelper.GetAppSettings("DebuggerFolder").DosTrimStart('/').DosTrimEnd('/') + "/" : "") + "Microi.net.dll";
+    microiNetDllVersion = FileVersionInfo.GetVersionInfo(filePath).FileVersion
+                        + " - "
+                        + File.GetLastWriteTime(filePath).ToString("yyyy-MM-dd HH:mm:ss");
+}
+catch (Exception ex)
+{
+    microiNetDllVersion = ex.Message;
+}
+Console.WriteLine($"Microi：【✅成功】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】您的平台服务器端版本号：v{microiNetDllVersion}");
+// ORM 引擎：Dos.ORM
+services.AddMicroi();//【必须】Microi初始化
+services.AddHostedService<LicenseBackgroundService>();// License 后台心跳验证
+services.AddMicroiORM();//【必须】注入【数据库ORM】插件
+services.AddMicroiCache();//【必须】注入【分布式缓存】插件
+services.AddMicroiHttp();//【必须】注入【Http】插件
+services.AddMicroiMongoDB();//【可选】注入【MongoDB】插件
+services.AddMicroiUpgrade();//【可选】注入【平台自动更新】插件
+services.AddMicroiWeChat();//【可选】注入【微信公众号平台】插件
+services.AddMicroiOffice();//【可选】注入【Office】插件
+services.AddMicroiSpider();//【可选】注入【采集引擎】插件
+services.AddMicroiMQ();//【可选】注入【MQ消息队列】插件
+services.AddMicroiSearchEngine();//【可选】注入【搜索引擎】插件
+services.AddMicroiAI();//【可选】注入【AI引擎】插件
+services.AddMicroiMQTT();//【可选】注入【MQTT引擎】插件
+services.AddMicroiHDFS();//【可选】注入【分布式存储】插件
+services.AddMicroiCaptcha();//【可选】注入验证码插件
+services.AddMicroiJob(dbConn);//【可选】注入【任务调度引擎】插件
+services.TryAddSingleton(typeof(DiyFilter<>));
+services.AddSingleton<DynamicRoute>();
+// 注册配置器
+services.AddSingleton<IConfigureOptions<JwtBearerOptions>, JwtBearerOptionsConfigurator>();
+services.AddSingleton<IConfigureOptions<CorsOptions>, CorsOptionsConfigurator>();
+// 数据校验
+services.Configure<ApiBehaviorOptions>(opt =>
+{
+    opt.InvalidModelStateResponseFactory = actionContext =>
+    {
+        //获取验证失败的模型字段
+        var errors = actionContext.ModelState
+            .Where(e => e.Value?.Errors.Count > 0)
+            .Select(e => e.Value?.Errors.First().ErrorMessage)
+            .ToList();
+        var str = string.Join("|", errors);
+        //设置返回内容
+        var result = new
+        {
+            Code = 0,
+            Msg = str
+        };
+        return new BadRequestObjectResult(result);
+    };
+});
+services.AddHttpContextAccessor();
+services.AddAuthorization();
+services.AddSession(opt =>
+{
+    opt.IdleTimeout = TimeSpan.FromMinutes(20);
+});
+services.AddHttpClient();
+services.AddUEditorService("ueditor.json", true, AppContext.BaseDirectory + "/wwwroot/");
+services.AddControllersWithViews(options =>
+{
+    // 添加自定义 ModelBinder，支持同时接收 form-data 和 JSON
+    options.ModelBinderProviders.Insert(0, new FormDataOrJsonModelBinderProvider());
+}).AddRazorRuntimeCompilation().AddNewtonsoftJson(options =>
+{
+    //取消json首字母小写
+    options.SerializerSettings.ContractResolver = new DefaultContractResolver();
+    options.SerializerSettings.DateFormatString = "yyyy-MM-dd HH:mm:ss";
+    options.SerializerSettings.DateParseHandling = DateParseHandling.None; // 禁用日期解析
+    // 确保整数值的 double 序列化为整数格式（防止 0 变成 0.0）
+    options.SerializerSettings.Converters.Add(new IntegerDoubleConverter());
+});
+//services.AddGrpc();
+Console.WriteLine($"Microi：【✅成功】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】Microi所有初始化成功！");
+#endregion
+
+#region SignalR、Redis
+var redisConn = RedisConnBuilder.BuildDefaultRedisConn();
+services.AddSignalR(options =>
+{
+    options.EnableDetailedErrors = true;
+    //客户端发保持连接请求到服务端最长间隔，默认30秒，改成4分钟，网页需跟着设置connection.keepAliveIntervalInMilliseconds = 12e4;即2分钟
+    options.ClientTimeoutInterval = TimeSpan.FromMinutes(20);
+    //服务端发保持连接请求到客户端间隔，默认15秒，改成2分钟，网页需跟着设置connection.serverTimeoutInMilliseconds = 24e4;即4分钟
+    options.KeepAliveInterval = TimeSpan.FromMinutes(20);
+    options.EnableDetailedErrors = true;
+    options.MaximumReceiveMessageSize = 1024 * 1024 * 10;//10M
+})
+.AddNewtonsoftJsonProtocol(options =>
+{
+    options.PayloadSerializerSettings.ContractResolver = new DefaultContractResolver();
+})
+.AddMessagePackProtocol()
+
+.AddStackExchangeRedis(redisConn, options => //暂时还没找到方案在【builder.Build()】之后注册redis连接字符串，因此使用初始化redis配置
+{
+    options.Configuration.ChannelPrefix = RedisChannel.Literal("MicroiSignalR");
+});
+services.AddStackExchangeRedisCache(options =>
+{
+    //暂时还没找到方案在【builder.Build()】之后注册redis连接字符串，因此使用初始化redis配置
+    options.Configuration = redisConn;
+    options.InstanceName = "Microi:";
+});
+#endregion
+
+#region Swagger
+services.AddSwaggerGen(s =>
+{
+    s.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "开源低代码平台 - Microi吾码",
+        // Description = clientModel.ClientName.DosIsNullOrWhiteSpace() ? "Microi.net" : clientModel.ClientName,
+        Version = microiNetDllVersion,
+        Contact = new OpenApiContact
+        {
+            Name = "Anderson",
+            Email = "admin@itdos.com",
+            // Url = new Uri((clientModel.OsClientModel["DomainName"].Val<string>().DosIsNullOrWhiteSpace() || clientModel.OsClientModel["DomainName"].Val<string>().Contains("$"))
+            //                 ? "https://microi.net"
+            //                 : (clientModel.OsClientModel["DomainName"].Val<string>().Contains("http") ? clientModel.OsClientModel["DomainName"].Val<string>() : "http://" + clientModel.OsClientModel["DomainName"].Val<string>())
+            //              )
+        }
+    })
+    ;
+});
+#endregion
+
+#region JWT、跨域
+services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer();
+services.AddCors();
+#endregion
+
+#region 添加微信配置
+services.AddSenparcWeixinServices(builder.Configuration);
+// CacheStrategyFactory.RegisterObjectCacheStrategy(() => RedisObjectCacheStrategy.Instance);
+#endregion
+
+var app = builder.Build();
+
+#region .Net 系统默认
+//app.MapGrpcService<GreeterService>();
+
+// ========== 全局异常处理中间件（必须在最前面） ==========
+app.UseGlobalExceptionHandler();
+
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler("/Home/Error");
+    app.UseHsts();
+    app.UseHttpsRedirection();
+}
+app.MapStaticAssets();
+app.UseRouting();
+//-------注意以下两者的顺序-------
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapDynamicControllerRoute<DynamicRoute>("apiengine/{*path}");
+app.MapControllerRoute(
+    name: "default",
+    pattern: "{controller=Home}/{action=Index}/{id?}");
+#endregion
+
+#region Microi.net 启用
+MicroiEngine.Init(app.Services);
+app.UseMicroi();      // 初始化 SaaS 引擎（同步加载 sys_osclients → ClientList）
+app.UseMicroiJob();   // 启用任务计划
+app.UseMicroiMQ();    // 启用消息队列
+app.UseMicroiUpgrade();// 启用平台自动升级
+app.MapHub<DiyWebSocket>("/diy-websocket").RequireCors("any");
+
+// 解析主租户名称（统一使用 OsClient.GetConfigOsClient，避免在 Program.cs 里重复读取 env / appsettings）
+var osClientName = OsClient.GetConfigOsClient();
+if (osClientName.DosIsNullOrWhiteSpace())
+{
+    osClientName = OsClientDefault.OsClient;
+}
+
+// 【关键修复】确保主租户的 OsClientModel 已从 sys_osclients 表中正确挂载，
+// 否则 InitializeDefaultClient 创建的占位模型不会包含 MqttEnable / EnableSwagger 等 DB 字段，
+// 导致 MQTT 等可选模块无法按配置启动。
+if (!OsClient.EnsureHydrated(osClientName))
+{
+    Console.WriteLine($"Microi：【⚠️警告】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】主租户[{osClientName}]的 OsClientModel 未能从 sys_osclients 完整挂载，部分 DB 配置项将以默认值生效。");
+}
+var clientModel = OsClient.GetClient(osClientName);
+#endregion
+
+#region Redis
+redisConn = RedisConnBuilder.Build(clientModel);
+#endregion
+
+#region MQTT（在主机完全启动后再启动 Broker，确保依赖注入与 V8 引擎就绪）
+if (clientModel.OsClientModel["MqttEnable"].Val<int>() == 1)
+{
+    var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+    lifetime.ApplicationStarted.Register(() =>
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                // 再次取最新 clientModel（防止启动期间被 V8 ReloadOsClient 刷新过）
+                var latest = OsClient.GetClient(osClientName);
+                var mqttService = app.Services.GetRequiredService<IMicroiMQTT>();
+                await mqttService.StartServerAsync(latest);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Microi：【❌Error】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】MQTT延迟启动失败：{ex.Message}");
+            }
+        });
+    });
+}
+#endregion
+
+#region 启用微信配置
+Senparc.CO2NET.Cache.Redis.Register.SetConfigurationOption(redisConn);
+var registerService = app.UseSenparcWeixin(app.Environment,
+    /* 不为 null 则覆盖 appsettings  中的 SenparcSetting 配置*/
+    new SenparcSetting()
+    {
+        IsDebug = false,
+        DefaultCacheNamespace = "MicroiWeChatCache",
+        Cache_Redis_Configuration = redisConn
+    }, null,
+    register =>
+    {
+    },
+    (register, weixinSetting) =>
+    {
+        //register.RegisterMpAccount("wxb3fb0a1b44902df3", "xxx", "微吾科技");
+    }
+);
+#endregion
+
+#region 接口引擎 / 数据源引擎动态路由
+try
+{
+    app.MapDynamicControllerRoute<DynamicRoute>("{controller}");
+    app.MapDynamicControllerRoute<DynamicRoute>("{controller}/{action}");
+    app.MapDynamicControllerRoute<DynamicRoute>("{controller}/{action}/{param1}");
+    app.MapDynamicControllerRoute<DynamicRoute>("{controller}/{action}/{param1}/{param2}");
+    app.MapDynamicControllerRoute<DynamicRoute>("{controller}/{action}/{param1}/{param2}/{param3}");
+    app.MapDynamicControllerRoute<DynamicRoute>("{controller}/{action}/{param1}/{param2}/{param3}/{param4}");
+    app.MapDynamicControllerRoute<DynamicRoute>("{controller}/{action}/{param1}/{param2}/{param3}/{param4}/{param5}");
+    Console.WriteLine($"Microi：【✅成功】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】接口引擎、数据源引擎动态接口地址配置成功！");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"Microi：【❌Error】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】接口引擎、数据源引擎动态接口地址配置失败：{ex.Message}");
+}
+#endregion
+
+#region 其它
+if (app.Environment.IsDevelopment())
+{
+    app.UseDeveloperExceptionPage();
+    Console.WriteLine($"Microi：【✅成功】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】开发环境诊断模式已启用");
+}
+app.UseSession();
+app.UseCors("any");
+app.UseWebSockets(new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromMinutes(20)
+});
+app.UseMiddleware<V8DebugWebSocketMiddleware>(); // V8 逐行调试 WebSocket
+if (clientModel.OsClientModel["EnableSwagger"].Val<int>() == 1)
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
+#endregion
+
+#region 应用完全启动后的延迟初始化（接口引擎缓存 / AI Schema 缓存）
+{
+    var lifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+    lifetime.ApplicationStarted.Register(() =>
+    {
+        _ = Task.Run(async () =>
+        {
+            // 接口引擎初始化（并行，租户数量可能较大）
+            try
+            {
+                var initTasks = OsClient.ClientList.Values
+                    .Select(c => new DynamicRoute().Init(c))
+                    .ToList();
+                await Task.WhenAll(initTasks);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Microi：【❌Error】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】接口引擎初始化失败：{ex.Message}");
+            }
+
+            // License 持久化：验证通过时写有效证明，宽限期写起始时间
+            var cachedVerify = LicenseService.Verify();
+            if (cachedVerify.Valid && cachedVerify.ExpirationDate.HasValue)
+                LicenseService.WriteValidProof(cachedVerify.ExpirationDate.Value);
+            else
+                LicenseService.PersistGracePeriodToDb();
+
+            // AI 引擎 Schema 缓存初始化
+            try
+            {
+                using var scope = app.Services.CreateScope();
+                var microiAI = scope.ServiceProvider.GetService<IMicroiAI>();
+                if (microiAI != null)
+                {
+                    var initResult = await microiAI.InitializeSchemaCache(osClientName);
+                    var tag = initResult.Code == 1 ? "✅成功" : "⚠️警告";
+                    Console.WriteLine($"Microi：【{tag}】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】【AI插件】{initResult.Msg}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Microi：【⚠️警告】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】【AI插件】AI Schema缓存初始化失败: {ex.Message}");
+            }
+        });
+    });
+}
+#endregion
+
+#region License 验证
+try
+{
+    // ── 开源版模式：公钥未配置时，跳过 License 校验，系统正常启动 ──
+    //    README 明确：开源版免费、可商用、随意修改、无限分发部署
+    //    仅在线 AI 相关高级功能受限，本地 AI 不受影响
+    if (LicenseService.IsOpenSourceMode())
+    {
+        LicenseService.SetGracePeriodMode(true);
+        Console.WriteLine($"Microi：【✅开源版】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】未配置自定义公钥，以开源版模式运行。License校验已跳过。");
+        Console.WriteLine($"Microi：【✅开源版】如需启用完整 License 功能，请生成密钥对并替换 DefaultPublicKeyBase64。");
+        Console.WriteLine($"Microi：【✅开源版】当前服务器HID：{LicenseService.GetHardwareId()}");
+    }
+    else
+    {
+        LicenseService.LoadHeartbeatStatus();   // 还原上次心跳记录的吊销状态
+        var licenseResult = LicenseService.Verify();
+        if (licenseResult.Valid)
+        {
+            // 即使本地 RSA 验证通过，也检查上次心跳是否记录了服务端吊销
+            if (LicenseService.IsRevokedByServer)
+            {
+                Console.WriteLine($"Microi：【❌License】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】License已被官方服务器吊销，系统拒绝启动。请联系官方：https://microi.net");
+                Environment.Exit(1);
+            }
+            var (overOffline, offlineDays) = LicenseService.CheckOfflineDays();
+            if (overOffline)
+                Console.WriteLine($"Microi：【⚠️License】已离线 {offlineDays} 天，超过限制 {LicenseService.OfflineGraceDays} 天，建议检查网络连接以完成联网验证");
+            Console.WriteLine($"Microi：【✅License】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】License验证通过！{licenseResult.Message}（{licenseResult.ProductType} | {licenseResult.Company}）");
+        }
+        else
+        {
+            var (graceAllowed, graceDaysLeft) = LicenseService.CheckGracePeriod();
+            if (graceAllowed)
+            {
+                LicenseService.SetGracePeriodMode(true);
+                Console.WriteLine($"Microi：【⚠️License】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】License验证未通过，进入宽限期模式（剩余 {graceDaysLeft} 天）。原因：{licenseResult.Message}");
+                Console.WriteLine($"Microi：【⚠️License】当前服务器HID：{LicenseService.GetHardwareId()}");
+                Console.WriteLine($"Microi：【⚠️License】请访问 /api/License/GetHardwareId 获取HID，并联系官方申请授权：https://microi.net");
+            }
+            else
+            {
+                Console.WriteLine($"Microi：【❌License】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】License宽限期已过，系统拒绝启动。原因：{licenseResult.Message}");
+                Console.WriteLine($"Microi：【❌License】当前服务器HID：{LicenseService.GetHardwareId()}");
+                Console.WriteLine($"Microi：【❌License】请联系官方获取正版License：https://microi.net");
+                Environment.Exit(1);
+            }
+        }
+    }
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"Microi：【⚠️License】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】License验证异常（宽限期运行）：{ex.Message}");
+    LicenseService.SetGracePeriodMode(true);
+}
+#endregion
+
+Console.WriteLine($"Microi：【✅成功】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】Microi全部启动成功！总耗时：{timer.ElapsedMilliseconds}ms");
+timer.Stop();
+Console.WriteLine($"Microi：【✅成功】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】开始访问系统吧！访问地址一般是【/Microi.net.Api/Properties/launchSettings.json】里的applicationUrl属性值【https://localhost:7266】");
+Console.WriteLine("------------------------------------------------------------------------------");
+Console.WriteLine("------------------------------------------------------------------------------");
+
+app.Run();

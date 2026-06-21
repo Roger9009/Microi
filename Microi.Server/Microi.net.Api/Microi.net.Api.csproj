@@ -1,0 +1,139 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <!-- 本地发布项目：dotnet clean && dotnet publish -c Release -o ./bin/Release/publish -->
+    <!-- 本地运行编译后的项目：dotnet Microi.net.Api.dll __urls=http://0.0.0.0:8080 【需替换__urls】 -->
+    <!-- 本地运行项目：dotnet run __launch-profile Microi.net.Api -->
+    <MicroiLocalRunCommand>Push-Location Microi.Server/Microi.net.Api; dotnet run --launch-profile Microi.net.Api; Pop-Location</MicroiLocalRunCommand>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>d0207c65-1d39-4295-b91e-ef94ae32985c</UserSecretsId>
+    <!-- 构建时是否编译 Razor 视图到 DLL -->
+    <RazorCompileOnBuild>true</RazorCompileOnBuild>
+    <!-- 发布时是否编译 Razor 视图到 DLL -->
+    <RazorCompileOnPublish>true</RazorCompileOnPublish>
+    <!-- 是否保留编译上下文： true保留，支持运行时编译（如动态视图）。 false 不保留，减少发布包大小 -->
+    <PreserveCompilationContext>false</PreserveCompilationContext>
+    <!-- 禁用运行时发布修剪（重要！） -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <!-- 禁用MSB3277程序集版本冲突警告 -->
+    <NoWarn>MSB3277</NoWarn>
+    <!-- 确保静态文件被复制 -->
+    <CopyRazorGenerateFilesToPublishDirectory>true</CopyRazorGenerateFilesToPublishDirectory>
+    <IncludeRazorContentInPack>true</IncludeRazorContentInPack>
+    <!-- 排除预编译 -->
+    <MvcRazorExcludeRefAssembliesFromPublish>false</MvcRazorExcludeRefAssembliesFromPublish>
+    <MvcRazorFilesToCompile>Remove</MvcRazorFilesToCompile>
+    <!-- 禁用 Razor SDK 的默认编译 -->
+    <UseRazorBuildServer>false</UseRazorBuildServer>
+  </PropertyGroup>
+
+  <!-- 确保 Views 文件夹被发布 -->
+  <ItemGroup>
+    <None Include="Views\**\*.cshtml" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="wwwroot\**\*" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- 排除 Development 配置文件，防止发布到生产环境 -->
+  <ItemGroup>
+    <Content Update="appsettings.Development.json" CopyToPublishDirectory="Never" />
+    <Content Update="appsettings.*.local.json" CopyToPublishDirectory="Never" />
+    <Content Update="appsettings.*.json" CopyToPublishDirectory="Never" />
+  </ItemGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <WarningLevel>4</WarningLevel>
+    <DocumentationFile>bin\Debug\net10.0\Microi.net.Api.xml</DocumentationFile>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+  
+  <!-- 禁用 NuGet 包安全漏洞警告（这些包暂时无法升级） -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);NU1902;NU1903</NoWarn>
+    <!-- 禁用过时 API 警告：SYSLIB0014(WebRequest), SYSLIB0022(RijndaelManaged) -->
+    <NoWarn>$(NoWarn);SYSLIB0014;SYSLIB0022</NoWarn>
+    <!-- 禁用 SQLite RID 特定资源警告（第三方库问题，无法控制）-->
+    <NoWarn>$(NoWarn);NETSDK1206</NoWarn>
+  </PropertyGroup>
+  
+  <ItemGroup>
+    <Folder Include="wwwroot\" />
+    <Folder Include="Views\" />
+    <Folder Include="Handler\" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="DotNetZip" Version="1.16.0" />
+    <PackageReference Include="IdentityModel" Version="7.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.1" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Razor.RuntimeCompilation" Version="10.0.1" />
+    <PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.15.0" />
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.15.0" />
+    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.15.0" />
+    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.15.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="7.2.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.NewtonsoftJson" Version="10.0.1" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.NewtonsoftJson" Version="10.0.1" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Protocols.MessagePack" Version="10.0.1" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.StackExchangeRedis" Version="10.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Caching.StackExchangeRedis" Version="10.0.1" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux.NoDependencies" Version="3.116.1" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <ProjectReference Include="../Dos.Common/Dos.Common.csproj" />
+    <ProjectReference Include="../Dos.ORM/Dos.ORM.csproj" />
+    <ProjectReference Include="../Microi.Core/Microi.Core.csproj" />
+    <ProjectReference Include="../Microi.License/Microi.License.csproj">
+      <Aliases>MicroiLicense</Aliases>
+    </ProjectReference>
+    <ProjectReference Include="../Microi.MongoDB/Microi.MongoDB.csproj" />
+  </ItemGroup>
+  
+  <!-- 智能引用 Microi.AI：本地存在用ProjectReference，否则用PackageReference -->
+  <ItemGroup Condition="'$(MicroiAIExists)' == 'true'">
+    <ProjectReference Include="..\Microi.AI\Microi.AI.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(MicroiAIExists)' != 'true'">
+    <PackageReference Include="Microi.AI" Version="$(MicroiNetVersion)" />
+  </ItemGroup>
+  
+  <!-- 智能引用 Microi.net：本地存在用ProjectReference，否则用PackageReference -->
+  <ItemGroup Condition="'$(MicroiNetExists)' == 'true'">
+    <ProjectReference Include="..\Microi.net\Microi.net.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(MicroiNetExists)' != 'true'">
+    <PackageReference Include="Microi.net" Version="$(MicroiNetVersion)" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <ProjectReference Include="../Microi.HDFS/Microi.HDFS.csproj" />
+    <ProjectReference Include="../Microi.Upgrade/Microi.Upgrade.csproj" />
+    <ProjectReference Include="../Microi.MQTT/Microi.MQTT.csproj" />
+    <ProjectReference Include="../Microi.V8Engine/Microi.V8Engine.csproj" />
+    <ProjectReference Include="..\Microi.Office\Microi.Office.csproj">
+      <GlobalPropertiesToRemove></GlobalPropertiesToRemove>
+    </ProjectReference>
+    <ProjectReference Include="..\Microi.Captcha\Microi.Captcha.csproj">
+      <GlobalPropertiesToRemove></GlobalPropertiesToRemove>
+    </ProjectReference>
+    <ProjectReference Include="..\Microi.Spider\Microi.Spider.csproj">
+      <GlobalPropertiesToRemove></GlobalPropertiesToRemove>
+    </ProjectReference>
+    <ProjectReference Include="..\Microi.WeChat\Microi.WeChat.csproj">
+      <GlobalPropertiesToRemove></GlobalPropertiesToRemove>
+    </ProjectReference>
+    <ProjectReference Include="..\Microi.Cache\Microi.Cache.csproj">
+      <GlobalPropertiesToRemove></GlobalPropertiesToRemove>
+    </ProjectReference>
+    <ProjectReference Include="..\Microi.MQ\Microi.MQ.csproj">
+      <GlobalPropertiesToRemove></GlobalPropertiesToRemove>
+    </ProjectReference>
+    <ProjectReference Include="..\Microi.Job\Microi.Job.csproj">
+      <GlobalPropertiesToRemove></GlobalPropertiesToRemove>
+    </ProjectReference>
+    <ProjectReference Include="..\Microi.SearchEngine\Microi.SearchEngine.csproj">
+      <GlobalPropertiesToRemove></GlobalPropertiesToRemove>
+    </ProjectReference>
+  </ItemGroup>
+</Project>

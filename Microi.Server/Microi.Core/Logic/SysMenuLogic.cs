@@ -1,0 +1,508 @@
+﻿using Dos.ORM;
+#region << 版 本 注 释 >>
+/****************************************************
+* 文 件 名：
+* Copyright(c) 道斯科技
+* CLR 版本: 4.0.30319.17929
+* 创 建 人：周浩
+* 电子邮箱：zhouhao@itdos.com
+* 创建日期：2016/3/1 10:00:11
+* 文件描述：
+******************************************************
+* 修 改 人：
+* 修改日期：
+* 备注描述：
+*******************************************************/
+#endregion
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using Dos.Common;
+// 通过扩展方法使用Dos.ORM API
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+
+namespace Microi.net
+{
+    public partial class SysMenuLogic
+    {
+        #region 禁止删除列表
+        public static Dictionary<string, string> CantDeleteId = new Dictionary<string, string>()
+        {
+           {"GetPa", "83442E16-917D-43B1-9C79-7F173C74EDC0"},
+        };
+        #endregion
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="param"></param>
+        /// <returns></returns>
+        /// <exception cref="Exception"></exception>
+        public async Task<DosResult<dynamic>> GetSysMenuHomePage(SysMenuParam param)
+        {
+            if (param.OsClient.DosIsNullOrWhiteSpace())
+            {
+                param.OsClient = DiyToken.GetCurrentOsClient();
+            }
+            if (param.OsClient.DosIsNullOrWhiteSpace())
+            {
+                return new DosResult<dynamic>(0, null, DiyMessage.GetLang(param.OsClient, "OsClientNotNull", param._Lang));
+            }
+            DbSession dbSession = OsClientExtend.GetClient(param.OsClient).DbRead;
+            //SysMenu model = dbSession.From<SysMenu>()
+            //                .Where(d => d.IsDeleted != 1 && d.Display == true)
+            //                .OrderBy(d=>d.Sort)
+            //                .First();
+            var modelResult = await MicroiEngine.FormEngine.GetFormDataAsync(new
+            {
+                TableName = "sys_menu",
+                OsClient = param.OsClient,
+                _SearchEqual = new
+                {
+                    Display = 1
+                },
+                _OrderBy = "Sort",
+                _OrderByType = "ASC"
+            });
+            return modelResult;
+        }
+        /// <summary>
+        /// 传入Id
+        /// </summary>
+        /// <param name="param"></param>
+        /// <returns></returns>
+        public async Task<DosResult<SysMenu>> GetSysMenuModel(SysMenuParam param)
+        {
+            if (param.Id.DosIsNullOrWhiteSpace()
+                )
+            {
+                return new DosResult<SysMenu>(0, null, DiyMessage.GetLang(param.OsClient, "ParamError", param._Lang));
+            }
+            if (param.OsClient.DosIsNullOrWhiteSpace())
+            {
+                param.OsClient = DiyToken.GetCurrentOsClient();
+            }
+            if (param.OsClient.DosIsNullOrWhiteSpace())
+            {
+                return new DosResult<SysMenu>(0, null, DiyMessage.GetLang(param.OsClient, "OsClientNotNull", param._Lang));
+            }
+            SysMenu model = null;
+            if (!param.Id.DosIsNullOrWhiteSpace())
+            {
+                //model = await SysMenuCache.GetSysMenuModel(param.Id, param.OsClient);
+            }
+            if (model == null)
+            {
+                DbSession dbSession = OsClientExtend.GetClient(param.OsClient).DbRead;
+                if (!param.Id.DosIsNullOrWhiteSpace())
+                {
+                    model = dbSession.From<SysMenu>().Where(d => d.Id == param.Id).First();
+                }
+                if (model == null)
+                {
+                    return new DosResult<SysMenu>(2, null, "不存在的数据Id：" + param.Id);
+                }
+                //SysMenuCache.SetSysMenuModel(model, param.OsClient);
+            }
+            return new DosResult<SysMenu>(1, model);
+        }
+
+        /// <summary>
+        /// 递归获取层级
+        /// </summary>
+
+
+        /// <summary>
+        /// 获取基础数据。必传：ParentId
+        /// </summary>
+        /// <param name="param"></param>
+        /// <returns></returns>
+        public async Task<DosResultList<SysMenu>> GetSysMenu(SysMenuParam param)
+        {
+            if (param.ParentId.DosIsNullOrWhiteSpace())
+            {
+                return new DosResultList<SysMenu>(0, null, DiyMessage.GetLang(param.OsClient, "ParamError", param._Lang));
+            }
+            if (param.OsClient.DosIsNullOrWhiteSpace())
+            {
+                param.OsClient = DiyToken.GetCurrentOsClient();
+            }
+            if (param.OsClient.DosIsNullOrWhiteSpace())
+            {
+                return new DosResultList<SysMenu>(0, null, DiyMessage.GetLang(param.OsClient, "OsClientNotNull", param._Lang));
+            }
+            DbSession dbSession = OsClientExtend.GetClient(param.OsClient).DbRead;
+            List<SysMenu> list = null;// await SysMenuCache.GetSysMenuList(param.ParentId, param.OsClient);
+            if (list == null)
+            {
+                var where = new Where<SysMenu>();
+                where.And(d => d.IsDeleted != 1);
+                where.And(a => a.ParentId == param.ParentId);
+                if (!param.Class.DosIsNullOrWhiteSpace())
+                {
+                    where.And(a => a.Class == param.Class || a.Class == "" || a.Class == null);
+                }
+                list = dbSession.From<SysMenu>().Where(where).OrderBy(d => d.Sort).ToList();
+                //SysMenuCache.SetSysMenuList(list, param.ParentId, param.OsClient);
+            }
+            return new DosResultList<SysMenu>(1, list);
+        }
+
+
+        /// <summary>
+        /// 获取菜单树形结构。
+        /// </summary>
+        /// <param name="param"></param>
+        /// <returns></returns>
+        public async Task<DosResultList<dynamic>> GetSysMenuStep(SysMenuParam param)
+        {
+            if (param.OsClient.DosIsNullOrWhiteSpace())
+            {
+                param.OsClient = DiyToken.GetCurrentOsClient();
+            }
+            if (param.OsClient.DosIsNullOrWhiteSpace())
+            {
+                return new DosResultList<dynamic>(0, null, DiyMessage.GetLang(param.OsClient, "ParamError", param._Lang));
+            }
+            var where = new List<List<object>>();
+            where.Add(new List<object>(){ "IsDeleted", "<>", 1 });
+            if (param.Ids != null)
+            {
+                where.Add(new List<object>(){ "Id", "In", param.Ids });
+            }
+            if (param.Display != null)
+            {
+                where.Add(new List<object>(){ "Display", "=", param.Display });
+            }
+            if (param.AppDisplay != null)
+            {
+                where.Add(new List<object>(){ "AppDisplay", "=", param.AppDisplay });
+            }
+            DbSession dbSession = OsClientExtend.GetClient(param.OsClient).DbRead;
+            //判断权限
+            //注意：如果有模块配置的菜单权限，那里返回的菜单就应该是所有
+            if (param._CurrentUser != null)
+            {
+                //如果是admin或权限999，并且是获取所有级别，就不需要执行下面的代码。
+                if (!(param._All == true && (
+                    param._CurrentUser?["Account"]?.ToString()?.ToLower() == "admin" ||
+                    (param._CurrentUser?["Level"] as JValue)?.Value<int>() >= DiyCommon.MaxRoleLevel
+                )))
+                {
+                    //2022-10-25更改为直接从sys_user表获取所有角色
+                    var roleIds = new List<string>();
+                    try
+                    {
+                        var roleIdsStr = param._CurrentUser?["RoleIds"]?.ToString();
+                        if (!roleIdsStr.DosIsNullOrWhiteSpace())
+                        {
+                            if (roleIdsStr.Contains("{"))
+                            {
+                                // JSON 对象数组字符串：[{"Id":"xxx","Name":"xxx"}]
+                                var rolesList = JsonHelper.Deserialize<List<SysRole>>(roleIdsStr) ?? new List<SysRole>();
+                                roleIds = rolesList.Select(d => d.Id).ToList();
+                            }
+                            else
+                            {
+                                // JSON 字符串数组：["id1","id2"]
+                                roleIds = JsonHelper.Deserialize<List<string>>(roleIdsStr) ?? new List<string>();
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // 异常时记录日志，返回空列表
+                        Console.WriteLine($"解析用户角色失败: {ex.Message}");
+                        roleIds = new List<string>();
+                    }
+
+                    //再取这些角色拥有的菜单
+                    var menuIds = await new SysRoleLimitLogic().GetSysRoleLimit(new SysRoleLimitParam()
+                    {
+                        RoleIds = roleIds,
+                        Type = "Menu",
+                        OsClient = param.OsClient
+                    });//, dbSession
+                    var ids = menuIds.Select(d => d.FkId).ToList();
+
+                    if (param._CurrentUser?["Account"]?.ToString()?.ToLower() == "admin")
+                    {
+                        ids.AddRange(new List<string>() {
+                            "cdc0844b-7249-4d64-a9c3-563a15c9cd20",//系统引擎
+                            "19009ad3-f22a-4bb5-833b-71851cdfd9e4",//模块引擎
+                            "dea581fd-a6ed-4f63-a320-6e21f46fce13",//数据源引擎
+                            "f873af6b-7577-44e0-b9a7-67027b54ace6",//接口引擎
+                            "e0931622-27c7-49cd-b222-49ee15db290f",//表单引擎
+                            "37e8acc8-de51-4032-9304-d7b363e60af3",//流程引擎
+                            "53f97f9d-15de-434a-8a06-5924417ae9d4",//微服务
+                            "adc8487f-9a58-4354-acbd-e97ce182ec7b",//系统管理
+                            "663bb061-d159-47ce-9cc8-0aa2b13e601b",//基础数据
+                            "cb73dd2c-6b5a-4b1b-91eb-64c31fa9a8b3",//系统帐号
+                            "03e8ad12-e43f-49d0-81f9-6a4ee118b555",//岗位角色
+                            "03ef7890-35a8-4428-86ba-0622a0f1c0a3",//部门机构
+                            "ea6b79e8-2c6b-4d0f-9b6a-44d01a3479bf",//系统设置diy
+                            "fe06ab66-7a10-4f3c-bced-523605f4c65e",//系统日志
+                        });
+                    }
+                    where.Add(new List<object>(){ "Id", "In", ids });// || d.UserId == param._CurrentSysUser.Id
+                }
+            }
+            var selectFields = new List<string>() {
+                // "Id", "Name", "Icon", "IconClass", "Display", "AppDisplay", "IsMicroiService",
+                // "OpenType", "ComponentName", "ComponentPath", "PageTemplate", "Url",
+                // "DiyTableId", "ParentId", "Sort",
+            };
+            if(param._SelectFields != null && param._SelectFields.Any())
+            {
+                selectFields = param._SelectFields;
+            }
+            var allResult = await MicroiEngine.FormEngine.GetTableDataAsync("sys_menu", new
+            {
+                _SelectFields = selectFields,
+                _Where = where,
+                _OrderBy = "Sort",
+                _OrderByType = "ASC",
+            });
+            var allData = allResult.Data as List<dynamic> ?? new List<dynamic>();
+
+            // 按ParentId构建字典索引，将递归子节点查找从O(n²)优化为O(n)
+            var childrenMap = new Dictionary<string, List<dynamic>>();
+            foreach (var item in allData)
+            {
+                string parentId = item.ParentId?.ToString() ?? "";
+                if (!childrenMap.ContainsKey(parentId))
+                {
+                    childrenMap[parentId] = new List<dynamic>();
+                }
+                childrenMap[parentId].Add(item);
+            }
+
+            // 获取第一级菜单
+            var firstList = new List<dynamic>();
+            if (!param._ChildSystemId.DosIsNullOrWhiteSpace())
+            {
+                if (childrenMap.TryGetValue(param._ChildSystemId, out var childItems))
+                {
+                    firstList.AddRange(childItems);
+                }
+            }
+            else
+            {
+                var rootKeys = new HashSet<string> { Guid.Empty.ToString(), "", DiyCommon.UlidEmpty };
+                foreach (var kvp in childrenMap)
+                {
+                    if (rootKeys.Contains(kvp.Key))
+                    {
+                        firstList.AddRange(kvp.Value);
+                    }
+                }
+                // 根级菜单可能来自多个"空父级"bucket，合并后需重新按 Sort 排序
+                if (firstList.Count > 0)
+                {
+                    firstList = firstList.OrderBy(d => (object)d.Sort).ToList();
+                }
+            }
+
+            var dataCount = firstList.Count;
+            //是否分页
+            if (param._PageSize != null && param._PageIndex != null)
+            {
+                firstList = firstList.Skip((param._PageIndex.Value - 1) * param._PageSize.Value).Take(param._PageSize.Value).ToList();
+            }
+            if (param._Top != null)
+            {
+                firstList = firstList.Take(param._Top.Value).ToList();
+            }
+            //递归获取层级（使用字典索引优化）
+            BuildChildrenFromMap(childrenMap, firstList);
+            return new DosResultList<dynamic>(1, firstList, "", dataCount);
+        }
+        /// <summary>
+        /// 递归获取层级（基于字典索引，O(n)复杂度）
+        /// </summary>
+        private void BuildChildrenFromMap(Dictionary<string, List<dynamic>> childrenMap, List<dynamic> list)
+        {
+            foreach (var item in list)
+            {
+                string id = item.Id?.ToString();
+                if (id != null && childrenMap.TryGetValue(id, out var children))
+                {
+                    item._Child = children;
+                    BuildChildrenFromMap(childrenMap, children);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 修改基础数据。必传：Id。可传：Value、Remark、Sort
+        /// </summary>
+        /// <param name="param"></param>
+        /// <returns></returns>
+        public async Task<DosResult> UptSysMenu(SysMenuParam param)
+        {
+            #region Check
+
+            if (param.Id.DosIsNullOrWhiteSpace())
+            {
+                return new DosResult(0, null, DiyMessage.GetLang(param.OsClient, "ParamError", param._Lang));
+            }
+            if (param.Id == param.ParentId)
+            {
+                return new DosResult(0, null, DiyMessage.GetLang(param.OsClient, "ParamError", param._Lang));
+            }
+            #endregion
+            var modelResult = await GetSysMenuModel(param);
+            var model = modelResult.Data;
+
+            DbSession dbSession = OsClientExtend.GetClient(param.OsClient).Db;
+
+
+            #region  通用修改
+            model = MapperHelper.MapNotNull<object, SysMenu>(param);
+            #endregion end
+
+            var count = dbSession.Update(model, d => d.Id == param.Id);
+            if (model.ParentId != null)
+            {
+                //SysMenuCache.DelSysMenuList(model.ParentId, param.OsClient);
+            }
+            //SysMenuCache.DelSysMenuModel(model, param.OsClient);
+            return new DosResult(1, model);
+        }
+        /// <summary>
+        /// 新增菜单。必传Name、OpenType
+        /// </summary>
+        /// <param name="param"></param>
+        /// <returns></returns>
+        public async Task<DosResult> AddSysMenu(SysMenuParam param)
+        {
+            if (param.Name.DosIsNullOrWhiteSpace()
+                || param.OpenType.DosIsNullOrWhiteSpace()
+                )
+            {
+                return new DosResult(0, null, DiyMessage.GetLang(param.OsClient, "ParamError", param._Lang));
+            }
+            if (param.OsClient.DosIsNullOrWhiteSpace())
+            {
+                param.OsClient = DiyToken.GetCurrentOsClient();
+            }
+
+            if (param.OsClient.DosIsNullOrWhiteSpace())
+            {
+                return new DosResult(0, null, DiyMessage.GetLang(param.OsClient, "OsClientNotNull", param._Lang));
+            }
+            try
+            {
+                DbSession dbSession = OsClientExtend.GetClient(param.OsClient).Db;
+
+                if (dbSession != null)
+                {
+                    if (!param.Url.DosIsNullOrWhiteSpace()
+                        && dbSession.From<SysMenu>().Where(d => d.Url == param.Url && d.IsDeleted != 1).First() != null)
+                    {
+                        return new DosResult(0, null, "已存在的Url！");
+                    }
+                    #region  通用新增
+                    var model = MapperHelper.Map<object, SysMenu>(param);
+                    model.Id = Ulid.NewUlid().ToString();
+                    #endregion end
+
+                    model.ParentId = param.ParentId.DosIsNullOrWhiteSpace() ? DiyCommon.UlidEmpty : param.ParentId;
+                    model.Sort = param.Sort ?? 0;
+                    model.CreateTime = DateTime.Now;
+                    model.MultRun = param.MultRun ?? 1;
+                    model.Display = param.Display ?? 1;
+                    model.Code = "Code" + DateTime.Now.ToString("yyyyMMddHHmmss");
+                    var count = dbSession.Insert(model);
+                    if (model.ParentId != null)
+                    {
+                        //SysMenuCache.DelSysMenuList(model.ParentId, param.OsClient);
+                    }
+                    return new DosResult(count > 0 ? 1 : 0, model, count > 0 ? "" : DiyMessage.GetLang(param.OsClient, "Line0", param._Lang));
+                }
+                return new DosResult(0, null, DiyMessage.GetLang(param.OsClient, "ParamError", param._Lang));
+            }
+            catch (Exception ex)
+            {
+
+
+                return new DosResult(0, null, ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// 删除基础数据，必传ID或Key
+        /// </summary>
+        /// <param name="param"></param>
+        /// <returns></returns>
+        public async Task<DosResult> DelSysMenu(SysMenuParam param)
+        {
+            #region Check
+            if (param.OsClient.DosIsNullOrWhiteSpace())
+            {
+                param.OsClient = DiyToken.GetCurrentOsClient();
+            }
+            if (param.OsClient.DosIsNullOrWhiteSpace())
+            {
+                return new DosResult(0, null, DiyMessage.GetLang(param.OsClient, "ParamError", param._Lang));
+            }
+            if (param.Id.DosIsNullOrWhiteSpace() && param.Ids == null)
+            {
+                return new DosResult(0, null, DiyMessage.GetLang(param.OsClient, "ParamError", param._Lang));
+            }
+            if (!param.Id.DosIsNullOrWhiteSpace() && CantDeleteId.ContainsValue(param.Id))
+            {
+                return new DosResult(0, null, DiyMessage.GetLang(param.OsClient, "CantDelete", param._Lang));
+            }
+            #endregion
+            DbSession dbSession = OsClientExtend.GetClient(param.OsClient).Db;
+            if (param.Ids != null)
+            {
+                var list = dbSession.From<SysMenu>().Where(d => d.Id.In(param.Ids)).ToList();
+                foreach (var baseData in list)
+                {
+                    //SysMenuCache.DelSysMenuModel(baseData, param.OsClient);
+                }
+                if (list.Any())
+                {
+                    //SysMenuCache.DelSysMenuList(list.First().ParentId, param.OsClient);
+                }
+                foreach (var item in list)
+                {
+                    item.IsDeleted = 1;
+                }
+                //var count = SysMenuRepository.Update(list);
+                var count = dbSession.Update(list);
+                return new DosResult(count > 0 ? 1 : 0, count, count > 0 ? "" : DiyMessage.GetLang(param.OsClient, "Line0", param._Lang));
+            }
+            else
+            {
+                var modelResult = await GetSysMenuModel(param);
+                if (modelResult.Code != 1)
+                {
+                    return new DosResult(0, null, modelResult.Msg);
+                }
+                var model = modelResult.Data;
+                if (dbSession.From<SysMenu>().Where(d => d.ParentId == model.Id && d.IsDeleted != 1).First() != null)
+                {
+                    return new DosResult(0, null, DiyMessage.GetLang(param.OsClient, "ExistChildData", param._Lang));
+                }
+                if (param._CurrentUser?["Account"]?.ToString()?.ToLower() != "admin" && model.UserId != param._CurrentUser?["Id"]?.ToString())
+                {
+                    return new DosResult(0, null, "您不能删除其它用户创建的菜单！");
+                }
+                model.IsDeleted = 1;
+                var count = dbSession.Update(model);
+                if (model.ParentId != null)
+                {
+                    //SysMenuCache.DelSysMenuList(model.ParentId, param.OsClient);
+                }
+                //SysMenuCache.DelSysMenuModel(model, param.OsClient);
+                return new DosResult(count > 0 ? 1 : 0, count, count > 0 ? "" : DiyMessage.GetLang(param.OsClient, "Line0", param._Lang));
+            }
+        }
+    }
+}

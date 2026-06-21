@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <OutputType>Library</OutputType>
+    <Authors>Microi</Authors>
+    <Company>www.microi.net</Company>
+    <Description>开源低代码平台-Microi吾码，License授权管理模块。官网：https://microi.net</Description>
+    <Copyright>Copyright 2009-2026 microi.net</Copyright>
+    <PackageProjectUrl>https://www.microi.net</PackageProjectUrl>
+    <PackageTags>低代码,LowCode,License,授权,Microi吾码,Microi,Microi.net,iTdos</PackageTags>
+    <Version>5.7.6</Version>
+    <AssemblyVersion>5.7.6</AssemblyVersion>
+    <FileVersion>5.7.6</FileVersion>
+    <IsPackable>false</IsPackable>
+    <Configurations>Release;Debug</Configurations>
+    <NoWarn>$(NoWarn);NU5128;SYSLIB0022</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Dos.Common/Dos.Common.csproj" />
+    <ProjectReference Include="../Microi.Core/Microi.Core.csproj" />
+  </ItemGroup>
+
+  <!-- 智能引用 Microi.net：本地存在用ProjectReference，否则用PackageReference -->
+  <ItemGroup Condition="'$(MicroiNetExists)' == 'true'">
+    <ProjectReference Include="..\Microi.net\Microi.net.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(MicroiNetExists)' != 'true'">
+    <PackageReference Include="Microi.net" Version="$(MicroiNetVersion)" />
+  </ItemGroup>
+
+</Project>

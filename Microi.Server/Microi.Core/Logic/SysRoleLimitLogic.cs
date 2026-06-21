@@ -1,0 +1,368 @@
+﻿using Dos.ORM;
+#region << 版 本 注 释 >>
+
+/****************************************************
+* 文 件 名：Sys_TrainerManageLogic
+* Copyright(c) www.iTdos.com
+* CLR 版本: 4.0.30319.17929
+* 创 建 人：iTdos
+* 电子邮箱：
+* 创建日期：2016/10/28 11:00:49
+* 文件描述：
+******************************************************
+* 修 改 人：
+* 修改日期：
+* 备注描述：
+*******************************************************/
+
+#endregion
+
+using Dos.Common;
+// 通过扩展方法使用Dos.ORM API
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text;
+using System.Threading.Tasks;
+using System.Web;
+
+namespace Microi.net
+{
+    public partial class SysRoleLimitLogic
+    {
+        public async Task<List<SysRoleLimit>> GetSysRoleLimit(SysRoleLimitParam param, DbSession dbSessionParam = null)
+        {
+            var where = new Where<SysRoleLimit>();
+            var whereSql = " where 1=1 ";
+            var sqlParams = new List<System.Data.Common.DbParameter>();
+            var clientModel = OsClientExtend.GetClient(param.OsClient);
+            DbSession dbSession = clientModel.DbRead;
+            var dbInfo = DiyCommon.GetDbInfo(clientModel.OsClientModel["DbType"].Val<string>());
+            var tDbSession = dbSessionParam == null ? dbSession : dbSessionParam;
+
+            if (param.RoleId != null)
+            {
+                where.And(d => d.RoleId == param.RoleId);
+                whereSql += $" and A.RoleId = {dbInfo.P}pRoleId ";
+                var p = tDbSession.Db.DbProviderFactory.CreateParameter();
+                p.ParameterName = "pRoleId";
+                p.DbType = System.Data.DbType.String;
+                p.Value = param.RoleId;
+                sqlParams.Add(p);
+            }
+            if (param.RoleIds != null)
+            {
+                where.And(d => d.RoleId.In(param.RoleIds));
+                if (param.RoleIds.Any())
+                {
+                    var inParamNames = new List<string>();
+                    for (int i = 0; i < param.RoleIds.Count; i++)
+                    {
+                        var pName = $"pRoleId{i}";
+                        inParamNames.Add($"{dbInfo.P}{pName}");
+                        var p = tDbSession.Db.DbProviderFactory.CreateParameter();
+                        p.ParameterName = pName;
+                        p.DbType = System.Data.DbType.String;
+                        p.Value = param.RoleIds[i];
+                        sqlParams.Add(p);
+                    }
+                    whereSql += " and A.RoleId in (" + string.Join(",", inParamNames) + ") ";
+                }
+                else
+                {
+                    whereSql += " and 1=0 ";
+                }
+            }
+            if (!param.Type.DosIsNullOrWhiteSpace())
+            {
+                where.And(d => d.Type == param.Type);
+                whereSql += $" and A.Type = {dbInfo.P}pType ";
+                var p = tDbSession.Db.DbProviderFactory.CreateParameter();
+                p.ParameterName = "pType";
+                p.DbType = System.Data.DbType.String;
+                p.Value = param.Type;
+                sqlParams.Add(p);
+            }
+
+            var fs = tDbSession.From<SysRoleLimit>()
+                        //.Select<SysGroup, SysRole, SysDept, SysPost>((a, b, c, d, e) => new
+                        //{
+                        //    a.All,
+                        //    GroupName = b.Name,
+                        //    RoleName = c.Name,
+                        //    DeptName = d.Name,
+                        //    PostName = e.Name
+                        //})
+                        //.LeftJoin<SysGroup>((a,b)=>a.FkId == b.Id)
+                        //.LeftJoin<SysRole>((a,b)=>a.FkId == b.Id)
+                        //.LeftJoin<SysDept>((a,b)=>a.FkId == b.Id)
+                        //.LeftJoin<SysPost>((a,b)=>a.FkId == b.Id)
+
+                        //2023-03-10，返回菜单名称
+                        .Select<SysMenu>((a, b) => new
+                        {
+                            a.All,
+                            FkName = b.Name,
+                        })
+                        .LeftJoin<SysMenu>((a, b) => a.FkId == b.Id)
+                        .Where(where);
+            //dataCount = SysRoleLimitRepository.Count(where);
+            //var dataCount = fs.Count();
+            //var list = SysRoleLimitRepository.Query(where, d => d.CreateTime, "desc", null, param._PageSize, param._PageIndex);
+            //var list = fs.ToList();
+
+            var sysRoleLimitTableName = MicroiEngine.ORM(dbInfo.DbType).GetTableName("sys_rolelimit", clientModel.OsClientModel["DbOracleTableSpace"].Val<string>());
+            var sysMenuTableName = MicroiEngine.ORM(dbInfo.DbType).GetTableName("sys_menu", clientModel.OsClientModel["DbOracleTableSpace"].Val<string>());
+
+            var sql = "select A.Id AS \"Id\","
+                                            + "A.RoleId AS \"RoleId\","
+                                            + "A.FkId AS \"FkId\","
+                                            + "A.Type AS \"Type\","
+                                            + "A.CreateTime AS \"CreateTime\","
+                                            + "A.Customer AS \"Customer\","
+                                            + "A.Permission AS \"Permission\","
+                                            + "B.Name AS \"FkName\""
+                                            + $" from {sysRoleLimitTableName} A left join {sysMenuTableName} B on A.FkId = B.Id "
+                                            + whereSql;
+            var list = tDbSession.FromSql(sql)
+                                .AddParameter(sqlParams.ToArray())
+                                .ToList<SysRoleLimit>();
+            return list;
+        }
+
+        /// <summary>
+        /// 传入Id
+        /// </summary>
+        /// <param name="param"></param>
+        /// <returns></returns>
+        public SysRoleLimit GetSysRoleLimitModel(SysRoleLimitParam param)
+        {
+            if (param.Id.DosIsNullOrWhiteSpace())
+            {
+                var msg2 = DiyMessage.GetLang(param.OsClient, "ParamError", param._Lang);
+                return null;
+            }
+            DbSession dbSession = OsClientExtend.GetClient(param.OsClient).DbRead;
+            var msg = "";
+            var where = new Where<SysRoleLimit>();
+            where.And(d => d.Id == param.Id);
+
+            //var model = SysRoleLimitRepository.First(where);
+            var model = dbSession.From<SysRoleLimit>().Where(where).First();
+            if (model == null)
+            {
+                msg = DiyMessage.GetLang(param.OsClient, "NoAccount", param._Lang);
+                return null;
+            }
+            return model;
+        }
+
+        /// <summary>
+        /// 新增
+        /// </summary>
+        /// <param name="param"></param>
+        /// <returns></returns>
+        public async Task<DosResult> AddSysRoleLimit(SysRoleLimitParam param)
+        {
+            #region  通用新增
+
+            var model = MapperHelper.Map<object, SysRoleLimit>(param);
+            model.Id = Ulid.NewUlid().ToString();
+
+            #endregion end
+
+            DbSession dbSession = OsClientExtend.GetClient(param.OsClient).Db;
+
+            model.CreateTime = DateTime.Now;
+            //var count = SysRoleLimitRepository.Insert(model);
+            var count = dbSession.Insert(model);
+            return new DosResult(count > 0 ? 1 : 0, count, count > 0 ? "" : DiyMessage.GetLang(param.OsClient, "Line0", param._Lang));
+        }
+
+        /// <summary>
+        /// 修改用户。必传：Id或Account
+        /// </summary>
+        /// <param name="param"></param>
+        /// <returns></returns>
+        public async Task<DosResult> UptSysRoleLimit(SysRoleLimitParam param)
+        {
+            #region Check
+
+            if (param.Id.DosIsNullOrWhiteSpace())
+            {
+                return new DosResult(0, null, DiyMessage.GetLang(param.OsClient, "ParamError", param._Lang));
+            }
+
+            #endregion
+
+            DbSession dbSession = OsClientExtend.GetClient(param.OsClient).Db;
+            //var model = SysRoleLimitRepository.First(d => d.Id == param.Id);
+            var model = dbSession.From<SysRoleLimit>().Where(d => d.Id == param.Id).First();
+            if (model == null)
+            {
+                return new DosResult(0, null, DiyMessage.GetLang(param.OsClient, "NoAccount", param._Lang));
+            }
+
+            #region  通用修改
+
+            //var modelJson = JObject.Parse(JsonHelper.Serialize(model));
+            //var paramJson = JObject.Parse(JsonHelper.Serialize(param));
+            //var modelList = modelJson.Properties();
+            //var paramList = paramJson.Properties();
+            //foreach (var l in modelList)
+            //{
+            //    if (paramList.Any(d => d.Name == l.Name))
+            //    {
+            //        var val = paramList.First(d => d.Name == l.Name).Value;
+            //        if (val.Type == JTokenType.Object || val.Type == JTokenType.Array || (val.Type != JTokenType.Null && ((Newtonsoft.Json.Linq.JValue)(val)).Value != null))
+            //        {
+            //            if (val.Type == JTokenType.Object || val.Type == JTokenType.Array) { l.Value = JsonHelper.Serialize(val); } else { l.Value = val; }
+            //        }
+            //    }
+            //}
+            //model = JsonHelper.Deserialize<SysRoleLimit>(JsonHelper.Serialize(modelJson));
+            model = MapperHelper.MapNotNull<object, SysRoleLimit>(param);
+
+            #endregion end
+
+            //var count = SysRoleLimitRepository.Update(model);
+            var count = dbSession.Update(model);
+            return new DosResult(1);
+        }
+
+        /// <summary>
+        /// 删除菜单，必传：Id
+        /// </summary>
+        /// <param name="param"></param>
+        /// <returns></returns>
+        public async Task<DosResult> DelSysRoleLimit(SysRoleLimitParam param)
+        {
+            if (param.Id.DosIsNullOrWhiteSpace())
+            {
+                return new DosResult(0, null, DiyMessage.GetLang(param.OsClient, "ParamError", param._Lang));
+            }
+            DbSession dbSession = OsClientExtend.GetClient(param.OsClient).Db;
+            //var model = SysRoleLimitRepository.First(d => d.Id == param.Id);
+            var model = dbSession.From<SysRoleLimit>().Where(d => d.Id == param.Id).First();
+            if (model == null)
+            {
+                return new DosResult(0, null, DiyMessage.GetLang(param.OsClient, "NoExistData", param._Lang) + " Id:" + param.Id);
+            }
+            //var count = SysRoleLimitRepository.Delete(param.Id);
+            var count = dbSession.Delete<SysRole>(param.Id);
+            return new DosResult(count > 0 ? 1 : 0, count, count > 0 ? "" : DiyMessage.GetLang(param.OsClient, "Line0", param._Lang));
+        }
+
+        /// <summary>
+        /// 必传RoleId，Type，FkIds
+        /// </summary>
+        /// <param name="param"></param>
+        /// <returns></returns>
+        public async Task<DosResult> UptSysUserAllFk(SysRoleLimitParam param)
+        {
+            #region Check
+
+            if (param.RoleId == null || param.Type.DosIsNullOrWhiteSpace() || param.FkIds == null || !param.FkIds.Any())
+            {
+                return new DosResult(0, null, DiyMessage.GetLang(param.OsClient, "ParamError", param._Lang));
+            }
+
+            #endregion
+
+            DbSession dbSession = OsClientExtend.GetClient(param.OsClient).Db;
+            using (var trans = dbSession.BeginTransaction())
+            {
+                //var delList = SysRoleLimitRepository.Query(d => d.RoleId == param.RoleId && d.Type == param.Type);
+                var delList = dbSession.From<SysRoleLimit>()
+                                        .Where(d => d.RoleId == param.RoleId && d.Type == param.Type)
+                                        .ToList();
+                trans.Delete(delList);
+                var addList = new List<SysRoleLimit>();
+                foreach (var guid in param.FkIds)
+                {
+                    addList.Add(new SysRoleLimit()
+                    {
+                        Id = Ulid.NewUlid().ToString(),
+                        RoleId = param.RoleId,
+                        FkId = guid,
+                        CreateTime = DateTime.Now,
+                        Type = param.Type
+                    });
+                }
+                trans.Insert(addList);
+                trans.Commit();
+            }
+            return new DosResult(1);
+        }
+
+        /// <summary>
+        /// 获取角色权限列表（表单设置权限）
+        /// 修复 2026-04-29：
+        /// 1) 原 SQL 把 rl.FkId 过滤条件写在 WHERE，使 LEFT JOIN 退化为 INNER JOIN，
+        ///    导致还没有为该菜单分配过权限记录的角色全部丢失（前端列表为空）。
+        ///    现把 rl.FkId 过滤迁入 ON 子句，保证返回所有未删除的角色。
+        /// 2) sys_rolelimit 表无 IsDeleted 字段，原 SQL 的 rl.IsDeleted 过滤会在
+        ///    严格数据库（如 PostgreSQL/Oracle）报错；移除之。
+        /// 3) sys_role.IsDeleted 为 int 列，使用 = 0 替代 = false 提高跨库兼容。
+        /// 4) 额外回传 rl.FkId，便于前端在保存时进行 upsert（无记录则 insert）。
+        /// </summary>
+        public async Task<DosResult<List<MenuRolelimitDto>>> GetSysRoleLimitByMenuId(SysRoleLimitParam param)
+        {
+            DbSession dbSession = OsClientExtend.GetClient(param.OsClient).DbRead;
+            var sql = @"SELECT rl.Id, r.Id as RoleId, r.Name as RoleName, rl.FkId, rl.Permission
+                          FROM sys_role as r
+                     LEFT JOIN sys_rolelimit rl
+                            ON r.Id = rl.RoleId AND rl.FkId = @pFkId
+                         WHERE r.IsDeleted <> 1 AND rl.IsDeleted <> 1
+                      ORDER BY r.Sort ASC";
+            var list = dbSession.FromSql(sql)
+                                .AddInParameter("pFkId", System.Data.DbType.String, param.FkId)
+                                .ToList<MenuRolelimitDto>();
+            return new DosResult<List<MenuRolelimitDto>>(1, list);
+        }
+
+        /// <summary>
+        /// 保存角色对单个菜单的权限。Upsert：Id 为空则新增 sys_rolelimit 记录，否则更新。
+        /// 修复 2026-04-29：原实现仅 UPDATE Id，对没有历史 rolelimit 行的角色完全无效，
+        /// 导致勾选了权限点保存后下次再打开仍为空。
+        /// </summary>
+        public async Task UpdateSysRoleLimitByMenuId(string osClient, string id, string roleId, string fkId, string permission)
+        {
+            DbSession dbSession = OsClientExtend.GetClient(osClient).Db;
+            if (string.IsNullOrEmpty(id))
+            {
+                var insertSql = @"INSERT INTO sys_rolelimit (Id, RoleId, FkId, Type, Permission, CreateTime)
+                                  VALUES (@pId, @pRoleId, @pFkId, @pType, @pPermission, @pCreateTime)";
+                dbSession.FromSql(insertSql)
+                         .AddInParameter("pId", System.Data.DbType.String, Guid.NewGuid().ToString())
+                         .AddInParameter("pRoleId", System.Data.DbType.String, roleId)
+                         .AddInParameter("pFkId", System.Data.DbType.String, fkId)
+                         .AddInParameter("pType", System.Data.DbType.String, "Menu")
+                         .AddInParameter("pPermission", System.Data.DbType.String, permission)
+                         .AddInParameter("pCreateTime", System.Data.DbType.DateTime, DateTime.Now)
+                         .ExecuteNonQuery();
+            }
+            else
+            {
+                var updateSql = "UPDATE sys_rolelimit SET Permission = @pPermission WHERE Id = @pId";
+                dbSession.FromSql(updateSql)
+                         .AddInParameter("pPermission", System.Data.DbType.String, permission)
+                         .AddInParameter("pId", System.Data.DbType.String, id)
+                         .ExecuteNonQuery();
+            }
+        }
+
+        public class MenuRolelimitDto
+        {
+            public string Id { get; set; }
+            public string RoleId { get; set; }
+            public string RoleName { get; set; }
+            public string FkId { get; set; }
+            public string Permission { get; set; }
+        }
+    }
+}

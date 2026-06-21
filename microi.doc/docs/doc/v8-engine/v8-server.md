@@ -1,0 +1,434 @@
+# 🖥️ V8 函数列表 - 后端
+
+> **服务器端 V8 引擎支持 ES6 语法，集成后端对象和方法**
+
+---
+
+## 📌 介绍
+
+- 服务器端 V8 引擎代码与前端 V8 的编程语言均为 JavaScript 语法
+- 服务器端 V8 引擎支持 ES6 语法
+- 集成了后端对象、方法，可使用 JS 调用后端方法（非 HTTP）
+- 服务器端 V8 代码在服务器端执行
+- 主要用于表单属性的服务器端 V8 事件、接口引擎、数据源引擎等
+
+## 接口引擎 V8.ApiEngine
+>* [接口引擎详细介绍](https://microi.net/doc/v8-engine/api-engine)
+>* 服务器端V8事件可以直接调用接口引擎（非http），接口引擎也可以调用接口引擎
+>* V8事件或接口引擎在调用另外一个接口引擎时，可传入事件对象，即可保证在同一事务
+```javascript
+//调用方式：
+var result = V8.ApiEngine.Run('ApiEngineKey', { 
+    Param1 : '1',
+});
+//同一事务
+var resul2 = V8.ApiEngine.Run('ApiEngineKey', { 
+    Param2 : '1',
+}， V8.DbTrans);
+```
+
+## 表单引擎 V8.FormEngine
+>* 见平台文档：[FormEngine用法](https://microi.net/doc/v8-engine/form-engine.html)
+
+## 缓存操作 V8.Cache
+>* 平台分布式缓存是L1、L2级联动的分布式缓存，L1为本地内存缓存，L2为redis缓存，V8.Cache操作的就是L2级redis缓存，平台会自动管理L1和L2的联动关系。当覆盖数据库、或直接修改数据库表结构数据后，可能需要手动重启api的docker容器以实现自动清除L1级缓存，然后可通过redis desktop manage软件清除L2级缓存。
+>* 分布式缓存操作类，用法V8.Cache('Key', 'Value', '0.00:10:00');
+>* 注意：过期时间的格式必须是`d.HH:mm:ss`，如`0.12:00:00`0天12小时，`1.10:10:00`一天10小时10分钟，也可以不传过期时间参数，则为永久。
+>* 建议使用的缓存Key命名规则为：`Microi:${V8.OsClient}:{分类key值}:{Key}`，这样与平台的缓存Key命名规则一致，方便查看，并且区分SaaS租户，防止缓存混乱
+```javascript
+var cacheKey = `Microi:${V8.OsClient}:FormData:baoming`;
+var cacheValue = JSON.stringify(formData);
+//写缓存
+var result1 = V8.Cache.Set(cacheKey, cacheValue, '0.00:00:59');//返回bool类型
+//获取缓存
+var result2 = V8.Cache.Get(cacheKey);//返回string类型，无缓存返回null
+//删除缓存。注：若在Set时设置了有效期，到期会自动删除。
+var result3 = V8.Cache.Remove(cacheKey);//返回bool类型
+```
+* 验证码缓存Key命名规则：
+```
+`Microi:${OsClient值}:{分类key值}:{Key}`
+示例：
+`Microi:iTdos:Captcha:aaaa-bbbb-cccc`
+```
+* 平台的redis key前缀只总有4级：
+>* 第一级用于区分其它第三方系统共用同一个redis实例时，区分哪个redis文件夹是吾码平台在用的
+>* 第二级用于区分saas租户
+>* 第三级用于区分redis分类，比如说验证码一类
+>* 第四级就是最终要用的key
+
+## C#系统类 System
+>* 服务器端V8代码能直接使用.net下的System命名空间
+::: details 展开查看 C# 代码（39 行）
+```csharp
+//生成一个服务器端GUID值
+//强烈建议使用 V8.Method.NewUlid() 方法替代 System.Guid.NewGuid()，Ulid 具有更好的排序性和更短的字符串长度
+System.Guid.NewGuid()
+
+
+//将字符串转为base64字符串，建议使用后封装的V8.Base64
+var bytes = System.Text.Encoding.UTF8.GetBytes(originalString);  
+var base64String = System.Convert.ToBase64String(bytes);
+
+//解密base64，，建议使用后封装的V8.Base64
+var bytes = System.Text.Encoding.UTF8.GetBytes(originalString);  
+var base64String = System.Convert.ToBase64String(bytes);
+
+//等待1000毫秒
+System.Threading.Thread.Sleep(1000);
+
+//调用服务器端全局V8函数，获取yyyy-MM-dd HH:mm:ss格式的当前时间字符串。若获取日期格式，可使用new Date();
+V8.Action.GetDateTimeNow()
+
+//如果在服务器端全局V8函数是通过function DateNow(){}这样定义的，则可以直接使用DateNow()
+var nowDate = DateNow('yyyy_mm-dd HH:mm:ss');
+
+//异步执行V8代码，方法1（推荐）
+var timer1 = setTimeout(function() {
+    V8.FormEngine.UptFormData('diy_test1', {
+      Id : '8007f94b-4883-4a0c-8c23-f25aca910722'
+      Text45 : '2222',
+    });
+}, 1000);
+//可在timer1开始执行前随时手动提前终止定时执行
+clearTimeout(timer1);
+
+//异步执行V8代码，方法2
+System.Threading.Tasks.Task.Run(function(){
+  //实现setTimeout(function, 1000)的效果，不加则是setTimeout(function, 0)的异步效果
+  System.Threading.Thread.Sleep(1000);
+  V8.FormEngine.UptFormData('diy_test1', {
+    Id : '8007f94b-4883-4a0c-8c23-f25aca910722'
+    Text45 : '2222',
+  });
+});
+```
+:::
+
+## 常用函数 V8.Method
+>* 集成了一些常用函数，可自定义扩展
+::: details 展开查看 JavaScript 代码（26 行）
+```javascript
+//从redis中获取当前登陆用户的token和身份信息
+//token：可选，是否包含Bearer均支持
+//osClient：可选
+var currentTokenObj = V8.Method.GetCurrentToken(token, osClient)
+//返回：{ OsClient : '', CurrentUser : {}, Token : '不包含 Bearer ' } 或 null
+
+//刷新用户的登陆身份redis缓存信息，必传userId、osClient
+V8.Method.RefreshLoginUser(userId, osClient)
+
+//获取私有文件的临时访问地址，可传入FilePathName、或FilePathNames
+V8.Method.GetPrivateFileUrl()
+var result = V8.Method.GetPrivateFileUrl({
+    FilePathName : '/microi/file/2023-08-06/xxx.doc',
+    //FilePathNameS : ['/microi/file/2023-08-06/xxx.doc']
+});
+//返回{ Code : 1/0, Data : '临时访问地址'/['临时访问地址'], Msg : '错误信息' }
+
+//添加系统日志
+V8.Method.AddSysLog({
+	Type : '', //日志类型，自定义文字，如：接口日志、性能日志、登录日志等
+	Title : '', //日志标题，如：张三登录了系统
+	Content: '', //日志内容，如：张三在2024-12-12 20:13通过扫码登录了系统 
+	OtherInfo : '', //其它信息，如：{ Append : 'test' }
+	Remark : '', //日志备注
+	Level : 1,//日志等级
+});
+```
+:::
+
+## V8.Base64
+>* Base64转换，与System.Convert.ToBase64String(bytes)不同的是V8.Base64若遇异常会直接返回源字符串
+```javascript
+var result = V8.Base64.StringToBase64('123456');
+var result = V8.Base64.Base64ToString('MTIzNDU2');
+```
+
+## 当前用户 V8.CurrentUser
+>* 当前登陆用户信息，包含用户所属角色、组织机构等，包含使用表单引擎对sys_user表新增字段的信息。
+>* 未登录时访问到的值为{}
+```js
+var userName = V8.CurrentUser.Name;
+```
+
+## 数据库对象 V8.Db
+>* 数据库访问对象，支持Dos.ORM、SqlSugar切换
+>* `FromSql` 只传 SQL 字符串；动态值请使用 `.AddInParameter("@p0", value)` 链式绑定，不要写 `FromSql(sql, value)`。
+```csharp
+//用例：
+var list = V8.Db.FromSql("select * from table")//也可以使用V8.DbTrans.FromSql()
+                .ToArray(); //返回数组数据，一般用于select查询多条数据语句
+                //返回受影响行数，一般用于update、delete、insert语句
+                .ExecuteNonQuery(); 
+                //返回单条数据，一般用于select查询单条数据语句
+                .First(); 
+                //返回单条数据的单个字段值，一般用于select单条数据查询、聚合函数、单个字段，如：select sum(Money) from table、select Name from table
+                .ToScalar(); 
+
+// 参数化查询
+var user = V8.Db.FromSql("select * from sys_user where Id = @p0")
+                .AddInParameter("@p0", userId)
+                .First();
+```
+
+## 数据库只读对象 V8.DbRead
+>* 数据库只读对象，用法和V8.Db一样，当数据库未部署读写分离时，此对象与V8.Db对象值一致。
+
+## 扩展数据库对象 V8.Dbs.DbKey
+>* 访问多数据库（扩展库）的对象，扩展库管理见：[https://web.microi.net/#/database](https://web.microi.net/#/database)
+>* 注意：老的数据库版本上面的表缺少【DbKey】字段，需要更新数据库、或手动添加、或等待应用商城上线【数据库管理】应用安装。
+>* 示例：访问oracle扩展库，DbKey的值为OracleDB1，其中V8.Dbs.OracleDB1对象就等同于V8.Db对象。
+```js
+var dataList = V8.Dbs.OracleDB1.FromSql('').ToArray();
+
+//扩展数据库的事务用法
+//【注意】emptyExTrans 是扮展库自己创建的事务，与 V8.DbTrans 完全独立，需要手动管理生命周期
+var emptyExTrans = V8.Dbs.EmptyEx.BeginTransaction();
+var count = emptyExTrans.FromSql("delete from diy_extend_test where Id='49ec484d-a2cf-47fe-b498-6efb2bf9f99d'").ExecuteNonQuery();
+emptyExTrans.Commit();//提交事务
+//emptyExTrans.Rollback();//回滚事务
+emptyExTrans.Close();//释放事务对象
+return { Code : 1, Data : count };
+```
+>* 已知问题：在平台中添加扩展库后，需要重启api的docker容器才会生效
+
+## 数据库事务 V8.DbTrans
+>* 数据库事务对象，可以像V8.Db一样使用，如：
+```js
+var array = V8.DbTrans.FromSql('...').ToArray();
+```
+* 无需在接口引擎中手动调用【V8.DbTrans.Rollback()】，平台会自动管理事务的提交与回滚（返回Code=1时自动提交，否则自动回滚）。**事务生命周期由平台统一管理，调用V8.DbTrans.Commit()或Rollback()均无效。**
+* 接口引擎示例
+```javascript
+//操作第一张表，带事务
+var result1 = V8.FormEngine.UptFormData('表名或表Id，不区分大小写', {
+    Id : '',//必传
+    Age : 20, //要修改的字段，注意字段值不能是{}或[]，需要序列化
+    Sex : '女'
+}， V8.DbTrans);
+//操作第二张表，带事务
+var result2 = V8.FormEngine.UptFormData('表名或表Id，不区分大小写', {
+    Id : '',//必传
+    Age : 20, //要修改的字段，注意字段值不能是{}或[]，需要序列化
+    Sex : '女'
+}， V8.DbTrans);
+//如果第二张表操作成功
+if(result2.Code == 1){
+  return { Code : 1 };//平台会自动提交事务，因为返回的Code=1
+}else{//如果第二张表操作失败
+  return { Code : 0, Msg : result.Msg };//平台会自动回滚事务，因为返回的Code=0
+}
+```
+
+## V8.MongoDb
+### 介绍
+>* 本篇介绍如何在接口引擎、后端V8事件中对MongoDB进行相关操作
+>* 对MongoDB的新增操作会自动生成对应数据库名和表名，因此可自定义分库、分表规则
+
+### 新增数据 AddFormData
+>*自定义数据库名、表名，不存在时会自动创建
+```javascript
+//可以指定固定的Id值
+var newId = V8.MongoDb.NewId();
+V8.MongoDb.AddFormData({
+	DbName : '', //数据库名称，如：sys_log_2024
+	TableName: '', //表名名称，如：log_2024_12
+	Id : newId, //也可以不指定，会自动生成
+	_FormData : {
+		Name : '张三',
+		Sex : '男',
+		Age : 18
+	}
+});
+```
+### 修改数据 DelFormData
+```javascript
+V8.MongoDb.UptFormData({
+	DbName : '', //数据库名称，如：sys_log_2024
+	TableName: '', //表名名称，如：log_2024_12
+	Id : '', //数据Id
+	_FormData : {
+		Name : '张三',
+		Sex : '男',
+		Age : 18
+	}
+});
+```
+### 删除数据 DelFormData
+```javascript
+V8.MongoDb.DelFormData({
+	DbName : '', //数据库名称，如：sys_log_2024
+	TableName: '', //表名名称，如：log_2024_12
+	Id : '', //数据Id
+});
+```
+
+### 查询数据列表 GetTableData
+```javascript
+V8.MongoDb.GetTableData({
+	DbName : '', //数据库名称，如：sys_log_itdos
+	TableName: '', //表名名称，如：log_202412
+  _Where : [
+    ['Type', '=', '访问菜单'], 
+    ['OR', 'Type', '=', '点击V8按钮']
+  ]
+});
+```
+
+### 查询单条数据 GetFormData
+```javascript
+V8.MongoDb.GetFormData({
+	DbName : '', //数据库名称，如：sys_log_2024
+	TableName: '', //表名名称，如：log_2024_12
+	Id : '', //数据Id
+});
+```
+
+## V8.Http
+>* 对RestSharp的封装，注意前端V8的post是V8.Post()，目前暂时并没有封装V8.Http，暂时写法不一致，后期会统一。
+::: details 展开查看 JavaScript 代码（45 行）
+```javascript
+//post请求，返回string，对应的也有V8.Http.Get，参数名称则为GetParam
+var loginResult = V8.Http.Post({
+  Url : 'http://192.168.0.173:1052/api/SysUser/login', //必传
+  PostParam : { Account : 'admin', Pwd : '****', OsClient : 'veken' },
+  //注意目前PostParam暂不支持多级属性，如：{ User: { Account : 'admin' }, OsClient : 'veken' }，此时则需要传入序列化后的字符串，如：
+  PostParamString : JSON.stringify({ User: { Account : 'admin' }, OsClient : 'veken' }),
+  ParamType : 'json', //请求类型，默认form
+  Timeout : 5, //请求超时时间，单位秒，默认5秒
+  Headers : { token : '', did : ''  }, //请求报文，参数名也可以是Header，平台均支持
+  FilesByteBase64 : {}, //上传文件，后期补充用法
+  FilesByteString : {}, //上传文件，后期补充用法
+});
+
+//post请求，返回Response对象，目前里面暂时只包含Headers、Content。，对应的也有V8.Http.GetResponse，参数数名称则为GetParam
+var loginResult2 = V8.Http.PostResponse({
+  Url : 'http://192.168.0.173:1052/api/SysUser/login',
+  PostParam : { Account : 'admin', Pwd : '******', OsClient : 'veken' }
+});
+//获取header中的Authorization值
+var header = loginResult2.Headers.find(item => {
+  return item.Name == 'Authorization' || item.Name == 'authorization';
+})
+if(header){
+  //再获取当前登陆身份信息，测试传入header
+  var token = header.Value;
+  var getCurrentUser = V8.Http.Post({
+    Url: 'http://192.168.0.173:1052/api/SysUser/getCurrentUser',
+    Headers: { authorization : 'Bearer ' + token}
+  });
+  return {
+    Code : 0, Msg : '获取身份信息成功：' + getCurrentUser
+  };
+}else{
+  //未获取到token
+  return {
+    Code : 0,  Msg : '获取header失败：' + loginResult2
+  }
+}
+
+//发起xml请求
+var result = V8.Http.Post({
+  Url : 'http://192.168.0.173:1052/api/SysUser/login',
+  ParamType : 'xml',
+  PostParamString : '<xml><text>1</text></xml>'
+});
+```
+:::
+
+## V8.Header、V8.Param
+>* 目前两者均只支持在接口引擎中使用，用于获取客户端http post请求接口引擎地址发送的报文和Request Payload参数。
+
+## 加密类 V8.EncryptHelper
+>* Dos.Common加密帮助类
+```javascript
+var pwd = V8.EncryptHelper.DESEncode('123456');//DES加密
+var pwd = V8.EncryptHelper.DESDecode('JdZe5gWKjZo=');//DES解密
+var pwd = V8.EncryptHelper.SHA1('123456');
+var pwd = V8.EncryptHelper.SHA256('123456');
+var pwd = V8.EncryptHelper.SHA512('123456');
+var pwd = V8.EncryptHelper.MD5Encrypt('123456');//MD5加密
+var pwd = V8.EncryptHelper.Sha256Hex('123456');
+```
+
+## V8.Office
+
+### 发送邮件 SendEmail
+>* 源码实现在[/Microi.Server/Microi.Office/MicroiOffice.cs](https://gitee.com/ITdos/microi.net/blob/master/Microi.Server/Microi.Office/MicroiOffice.cs)
+```js
+return V8.Office.SendEmail({
+  SmtpServer : 'smtp.qq.com',
+  SmtpPort : 587,
+  EnableSSL : true,
+  SystemEmail : 'admin@itdos.com',
+  SystemEmailPwd : 'uuzrnazvv*******',
+  EmailSubject : '测试接口引擎发邮件标题',
+  EmailBody : '<b>测试接口引擎发邮件内容，<span style="color:red;">支持html</span></b>',
+  Receivers : ['123446172@qq.com', '973702@qq.com']
+});
+```
+
+## 系统设置 V8.SysConfig
+>* 访问系统设置信息，可以访问到系统设置`sys_config`表的任意字段
+```js
+var sysTitle = V8.SysConfig.SysTitle;
+```
+
+## SaaS引擎信息 V8.OsClientModel
+>* 访问当前SaaS引擎敏感配置数据
+>* 第三方系统敏感配置也均应该放到SaaS引擎的配置中，如第三方系统key、secret等
+```js
+//获取redis host
+var redisHost = V8.OsClientModel.RedisHost;
+```
+
+## 表单数据 V8.Form
+>* 表单提交事件中可访问表单数据，接口引擎中此对象为空。
+
+## V8.OldForm
+>* 在修改数据时，后端V8事件可访问到V8.OldForm修改前的数据值
+
+## V8.FormSubmitAction
+>* 表单提交类型：可能的值：`Insert` `Delete` `Update`（string类型）
+>* 注意服务器端V8事件里面没有`FormOutAction`、`FormOutAfterAction`，只有`FormSubmitAction`
+
+## V8.EventName
+>* 后端V8事件名称，在全局V8引擎代码中比较好用，可能的值：
+```js
+FormSubmitBefore：表单提交前V8事件
+FormSubmitAfter：表单提交后V8事件
+DataFilter：数据处理V8事件
+WFNodeLine：流程节点条件判断V8事件
+WFNodeEnd：流程节点结束V8事件
+WFNodeStart：流程节点开始V8事件
+```
+
+
+## V8.Param
+>* 用于访问前端传入的参数，能访问到url参数、form-data参数、payload-json参数
+
+## V8.Action
+>* 用于访问在全局服务器V8代码处自定义的方法
+
+## V8.InvokeType
+>* 访问当前调用类型，可能的值：`Server`、`Client`，当访问到的V8.InvokeType为空时，则默认`Server`
+>* `Server`：服务器端调用，如在接口引擎中调用接口引擎，在后端V8事件中调用接口引擎
+>* `Client`：前端调用，如在前端V8事件中调用接口引擎，在前端提交表单
+
+## V8.TableModel
+>* 在后端V8事件中，可访问到操作的当前`diy_table`表的信息
+
+## V8.OsClient
+>* 访问当前的OsClient值
+
+## console
+>* Microi.net.dll从v3.5.1开始支持console往服务器端输出日志
+```js
+console.log('日志输出');
+console.error('日志输出');
+console.warn('日志输出');
+console.info('日志输出');
+//服务端查看日志
+docker logs microi-api
+```

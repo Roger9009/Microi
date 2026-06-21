@@ -1,0 +1,539 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection.Emit;
+using Dos.Common;
+
+namespace Dos.ORM
+{
+    /// <summary>
+    /// Oracle数据库实现
+    /// </summary>
+	public class OracleService : IMicroiORM
+    {
+        /// <summary>
+        /// 目前一些diy内置表用到的关键词字段名
+        /// </summary>
+        private static readonly HashSet<string> DefaultFieldNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Unique", "Level", "Column", "Lock"
+        };
+
+        public bool NeedsExplicitSelectAlias => true;
+        public bool UsesRowNumberPagination => false;
+
+        /// <summary>
+        /// 特殊处理datetime类型的CreateTime字段
+        /// </summary>
+        /// <param name="datetime"></param>
+        /// <returns></returns>
+        public string GetDatetimeFieldValue(string datetime)
+        {
+            return $"TO_DATE('{datetime}', 'yyyy-mm-dd hh24:mi:ss')";
+        }
+
+        /// <summary>
+        /// Oracle AS别名后返回正确的大驼峰字段名（属性名/对象名），否则会返回全大写。
+        /// </summary>
+        /// <param name="fieldName"></param>
+        /// <returns></returns>
+        public string GetFieldAsName(string fieldName)
+        {
+            return "\"" + fieldName + "\"";
+        }
+
+        /// <summary>
+        /// 修改表名
+        /// </summary>
+        /// <param name="param"></param>
+        /// <param name="_trans"></param>
+        /// <returns></returns>
+        public DosResult UptDiyTable(DbServiceParam param, DbTrans _trans = null)
+        {
+            if (param.TableName.DosIsNullOrWhiteSpace() || param.OldTableName.DosIsNullOrWhiteSpace())
+                return new DosResult(0, null, DDLConfig.GetLang(param.OsClient, "ParamError", param._Lang));
+
+            // SQL注入防护：仅允许字母数字下划线
+            if (!IsValidIdentifier(param.TableName) || !IsValidIdentifier(param.OldTableName))
+                return new DosResult(0, null, "表名不合法，只允许字母、数字和下划线");
+
+            var sql = $"ALTER TABLE \"{param.OldTableName}\" RENAME TO \"{param.TableName}\"";
+
+            try
+            {
+                dynamic session = (object)_trans ?? param.DbSession;
+                session.FromSql(sql).ExecuteNonQuery();
+                return new DosResult(1);
+            }
+            catch (Exception ex)
+            {
+                return new DosResult(0, null, $"重命名表失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Oracle字段名一般不加双引号，除非是关键词字段名
+        /// </summary>
+        /// <param name="fieldName"></param>
+        /// <returns></returns>
+        public string GetFieldName(string fieldName)
+        {
+            if (DefaultFieldNames.Contains(fieldName))
+            {
+                return $"\"{fieldName}\"";
+            }
+            return fieldName;
+        }
+
+        /// <summary>
+        /// 目前暂时用不到userName，以原tableName返回。
+        /// </summary>
+        /// <param name="tableName"></param>
+        /// <param name="userName"></param>
+        /// <returns></returns>
+        public string GetTableName(string tableName, string userName = null)
+        {
+            if (userName.DosIsNullOrWhiteSpace())
+            {
+                return tableName;
+            }
+            return userName + "." + tableName;
+        }
+
+        /// <summary>
+        /// 加载非DIY表
+        /// </summary>
+        /// <param name="param"></param>
+        /// <param name="realFieldList"></param>
+        /// <param name="_trans"></param>
+        /// <returns></returns>
+        /// <exception cref="NotImplementedException"></exception>
+        public DosResult LoadNotDiyTable(DbServiceParam param, List<information_schema_columns> realFieldList, DbTrans _trans = null)
+        {
+            if (param.TableName.DosIsNullOrWhiteSpace())
+            {
+                return new DosResult(0, null, DDLConfig.GetLang(param.OsClient, "ParamError", param._Lang));
+            }
+            //if (_trans != null)
+            {
+                if (!realFieldList.Any(d => d.column_name.ToLower() == "id"))
+                {
+                    AddColumn(new DbServiceParam()
+                    {
+                        TableName = param.TableName,
+                        // Field = new DiyField() {
+                        //     Name = "Id",
+                        //     Type = "varchar(36)",
+                        //     Label = "Id",
+                        // },
+                        FieldName = "Id",
+                        FieldType = "varchar(36)",
+                        FieldLabel = "Id",
+                        DbSession = param.DbSession,
+                        DbInfo = param.DbInfo
+                    }, _trans);
+                }
+                //_trans.FromSql(string.Format("ALTER TABLE `" + param.TableName + "` ADD COLUMN `Id` varchar(36) NOT NULL COMMENT 'Id';ALTER TABLE `" + param.TableName + "` ADD PRIMARY KEY (Id);")).ExecuteNonQuery();
+                //if (!realFieldList.Any(d => d.column_name.ToLower() == "ParentId".ToLower()))
+                //    trans.FromSql(string.Format("ALTER TABLE `" + addDiyTableResult.Data.Name + "` ADD COLUMN `ParentId` char(36) NULL COMMENT '父级Id';")).ExecuteNonQuery();
+                if (!realFieldList.Any(d => d.column_name.ToLower() == "createtime".ToLower()))
+                    AddColumn(new DbServiceParam()
+                    {
+                        TableName = param.TableName,
+                        // Field = new DiyField()
+                        // {
+                        //     Name = "CreateTime",
+                        //     Type = "DATE",
+                        //     Label = "创建时间"
+                        // },
+                        FieldName = "CreateTime",
+                        FieldType = "DATE",
+                        FieldLabel = "创建时间",
+                        DbSession = param.DbSession,
+                        DbInfo = param.DbInfo
+                    }, _trans);
+                //_trans.FromSql(string.Format("ALTER TABLE `" + param.TableName + "` ADD COLUMN `CreateTime` datetime NULL COMMENT '创建时间';")).ExecuteNonQuery();
+                if (!realFieldList.Any(d => d.column_name.ToLower() == "updatetime".ToLower()))
+                    AddColumn(new DbServiceParam()
+                    {
+                        TableName = param.TableName,
+                        // Field = new DiyField()
+                        // {
+                        //     Name = "UpdateTime",
+                        //     Type = "DATE",
+                        //     Label = "修改时间"
+                        // },
+                        FieldName = "UpdateTime",
+                        FieldType = "DATE",
+                        FieldLabel = "修改时间",
+                        DbSession = param.DbSession,
+                        DbInfo = param.DbInfo
+                    }, _trans);
+                //_trans.FromSql(string.Format("ALTER TABLE `" + param.TableName + "` ADD COLUMN `UpdateTime` datetime NULL COMMENT '修改时间';")).ExecuteNonQuery();
+                if (!realFieldList.Any(d => d.column_name.ToLower() == "userid".ToLower()))
+                    AddColumn(new DbServiceParam()
+                    {
+                        TableName = param.TableName,
+                        // Field = new DiyField()
+                        // {
+                        //     Name = "UserId",
+                        //     Type = "varchar(36)",
+                        //     Label = "创建人Id"
+                        // },
+                        FieldName = "UserId",
+                        FieldType = "varchar(36)",
+                        FieldLabel = "创建人Id",
+                        DbSession = param.DbSession,
+                        DbInfo = param.DbInfo
+                    }, _trans);
+                //_trans.FromSql(string.Format("ALTER TABLE `" + param.TableName + "` ADD COLUMN `UserId` varchar(36) NULL COMMENT '操作人Id';")).ExecuteNonQuery();
+                if (!realFieldList.Any(d => d.column_name.ToLower() == "username".ToLower()))
+                    AddColumn(new DbServiceParam()
+                    {
+                        TableName = param.TableName,
+                        // Field = new DiyField()
+                        // {
+                        //     Name = "UserName",
+                        //     Type = "varchar(255)",
+                        //     Label = "创建人"
+                        // },
+                        FieldName = "UserName",
+                        FieldType = "varchar(255)",
+                        FieldLabel = "创建人",
+                        DbSession = param.DbSession,
+                        DbInfo = param.DbInfo
+                    }, _trans);
+                //_trans.FromSql(string.Format("ALTER TABLE `" + param.TableName + "` ADD COLUMN `UserName` varchar(255) NULL COMMENT '操作人';")).ExecuteNonQuery();
+                if (!realFieldList.Any(d => d.column_name.ToLower() == "isdeleted".ToLower()))
+                    AddColumn(new DbServiceParam()
+                    {
+                        TableName = param.TableName,
+                        // Field = new DiyField()
+                        // {
+                        //     Name = "IsDeleted",
+                        //     Type = "NUMBER",
+                        //     Label = "是否删除"
+                        // },
+                        FieldName = "IsDeleted",
+                        FieldType = "NUMBER",
+                        FieldLabel = "是否删除",
+                        DbSession = param.DbSession,
+                        DbInfo = param.DbInfo
+                    }, _trans);
+                //_trans.FromSql(string.Format("ALTER TABLE `" + param.TableName + "` ADD COLUMN `IsDeleted` bit(1) NULL DEFAULT b'0' COMMENT '是否删除';")).ExecuteNonQuery();
+
+            }
+            //else
+            //{
+            //    if (!realFieldList.Any(d => d.column_name.ToLower() == "id"))
+            //        param.DbSession.FromSql(string.Format("ALTER TABLE `" + param.TableName + "` ADD COLUMN `Id` varchar(36) NOT NULL COMMENT 'Id';ALTER TABLE `" + param.TableName + "` ADD PRIMARY KEY (Id);")).ExecuteNonQuery();
+            //    //if (!realFieldList.Any(d => d.column_name.ToLower() == "ParentId".ToLower()))
+            //    //    trans.FromSql(string.Format("ALTER TABLE `" + addDiyTableResult.Data.Name + "` ADD COLUMN `ParentId` char(36) NULL COMMENT '父级Id';")).ExecuteNonQuery();
+            //    if (!realFieldList.Any(d => d.column_name.ToLower() == "createtime".ToLower()))
+            //        param.DbSession.FromSql(string.Format("ALTER TABLE `" + param.TableName + "` ADD COLUMN `CreateTime` datetime NULL COMMENT '创建时间';")).ExecuteNonQuery();
+            //    if (!realFieldList.Any(d => d.column_name.ToLower() == "updatetime".ToLower()))
+            //        param.DbSession.FromSql(string.Format("ALTER TABLE `" + param.TableName + "` ADD COLUMN `UpdateTime` datetime NULL COMMENT '修改时间';")).ExecuteNonQuery();
+            //    if (!realFieldList.Any(d => d.column_name.ToLower() == "userid".ToLower()))
+            //        param.DbSession.FromSql(string.Format("ALTER TABLE `" + param.TableName + "` ADD COLUMN `UserId` varchar(36) NULL COMMENT '操作人Id';")).ExecuteNonQuery();
+            //    if (!realFieldList.Any(d => d.column_name.ToLower() == "username".ToLower()))
+            //        param.DbSession.FromSql(string.Format("ALTER TABLE `" + param.TableName + "` ADD COLUMN `UserName` varchar(255) NULL COMMENT '操作人';")).ExecuteNonQuery();
+            //    if (!realFieldList.Any(d => d.column_name.ToLower() == "isdeleted".ToLower()))
+            //        param.DbSession.FromSql(string.Format("ALTER TABLE `" + param.TableName + "` ADD COLUMN `IsDeleted` bit(1) NULL DEFAULT b'0' COMMENT '是否删除';")).ExecuteNonQuery();
+            //}
+
+            return new DosResult(1);
+        }
+
+        /// <summary>
+        /// 创建表
+        /// </summary>
+        /// <param name="param"></param>
+        /// <returns></returns>
+        public DosResult AddDiyTable(DbServiceParam param, DbTrans _trans = null)
+        {
+            if (param.TableName.DosIsNullOrWhiteSpace())
+                return new DosResult(0, null, DDLConfig.GetLang(param.OsClient, "ParamError", param._Lang));
+
+            if (_trans == null && param.DbSession == null)
+                return new DosResult(0, null, DDLConfig.GetLang(param.OsClient, "ParamError", param._Lang));
+
+            // SQL注入防护
+            if (!IsValidIdentifier(param.TableName))
+                return new DosResult(0, null, "表名不合法，只允许字母、数字和下划线");
+
+            var tableName = GetTableName(param.TableName);
+            var sql = $@"CREATE TABLE {tableName}(
+                        Id varchar(36) NOT NULL primary key,
+                        CreateTime DATE NULL,
+                        UpdateTime DATE NULL,
+                        UserId varchar(36) NULL,
+                        UserName varchar(255) NULL,
+                        IsDeleted int NULL
+                    )";
+
+            try
+            {
+                dynamic session = (object)_trans ?? param.DbSession;
+                session.FromSql(sql).ExecuteNonQuery();
+                return new DosResult(1);
+            }
+            catch (Exception ex)
+            {
+                return new DosResult(0, null, $"创建表失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 添加列/字段
+        /// </summary>
+        /// <param name="param"></param>
+        /// <param name="_trans"></param>
+        /// <returns></returns>
+        public DosResult AddColumn(DbServiceParam param, DbTrans _trans = null)
+        {
+            if (param.TableName.DosIsNullOrWhiteSpace() ||
+                param.FieldName.DosIsNullOrWhiteSpace() ||
+                param.FieldType.DosIsNullOrWhiteSpace() ||
+                (param.DbSession == null && _trans == null))
+                return new DosResult(0, null, DDLConfig.GetLang(param.OsClient, "ParamError", param._Lang));
+
+            // SQL注入防护
+            if (!IsValidIdentifier(param.TableName) || !IsValidIdentifier(param.FieldName))
+                return new DosResult(0, null, "表名或字段名不合法");
+
+            param.FieldType = param.FieldType.Contains("text") ? "text" : param.FieldType;
+            var sql = $"ALTER TABLE {param.TableName} ADD {param.FieldName} {param.FieldType} {(param.FieldNotNull ? "NOT NULL" : "NULL")}";
+
+            try
+            {
+                dynamic session = (object)_trans ?? param.DbSession;
+                session.FromSql(sql).ExecuteNonQuery();
+
+                // 添加注释
+                if (!param.FieldLabel.DosIsNullOrWhiteSpace())
+                {
+                    var commentSql = $"COMMENT ON COLUMN {param.TableName}.{param.FieldName} IS '{param.FieldLabel.Replace("'", "''")}' ";
+                    try
+                    {
+                        session.FromSql(commentSql).ExecuteNonQuery();
+                    }
+                    catch
+                    {
+                        // 注释失败不影响字段创建
+                    }
+                }
+                return new DosResult(1);
+            }
+            catch (Exception ex)
+            {
+                return new DosResult(0, null, $"添加字段失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// 修改列/字段
+        /// </summary>
+        /// <param name="param"></param>
+        /// <param name="_trans"></param>
+        /// <returns></returns>
+        public DosResult ChangeColumn(DbServiceParam param, DbTrans _trans = null)
+        {
+            if (param.TableName.DosIsNullOrWhiteSpace()
+                || param.FieldName.DosIsNullOrWhiteSpace()
+                || param.NewFieldName.DosIsNullOrWhiteSpace()
+                || param.FieldType.DosIsNullOrWhiteSpace()
+                )
+            {
+                return new DosResult(0, null, DDLConfig.GetLang(param.OsClient, "ParamError", param._Lang));
+            }
+
+            var tableName = GetTableName(param.TableName);
+            var oldFieldName = GetFieldName(param.FieldName);
+            var newFieldName = GetFieldName(param.NewFieldName);
+
+            param.FieldType = param.FieldType.Contains("text") ? "text" : param.FieldType;
+
+            if (oldFieldName.ToLower() != newFieldName.ToLower())
+            {
+                //修改名称
+                var sql = $@"ALTER TABLE {tableName} RENAME COLUMN {oldFieldName} to {newFieldName}";
+                if (_trans != null)
+                {
+                    var count = _trans.FromSql(sql).ExecuteNonQuery();
+                }
+                else
+                {
+                    var count = param.DbSession.FromSql(sql).ExecuteNonQuery();
+                }
+            }
+
+
+            if (param.FieldType != param.OldFieldType)
+            {
+                var upTypeSql = $"alter table {tableName} modify ({newFieldName} {param.FieldType})";
+                var dosSession = param.DbSession;
+                var count2 = dosSession.FromSql(upTypeSql).ExecuteNonQuery();
+            }
+
+            if (param.FieldLabel != null)
+            {
+                var sql = $"COMMENT ON COLUMN {tableName}.{newFieldName} IS '{param.FieldLabel ?? ""}'";
+                if (_trans != null)
+                {
+                    var dosTrans = _trans;
+                    var count = dosTrans.FromSql(sql).ExecuteNonQuery();
+                }
+                else
+                {
+                    var dosSession = param.DbSession;
+                    var count = dosSession.FromSql(sql).ExecuteNonQuery();
+                }
+            }
+            return new DosResult(1);
+        }
+
+
+        /// <summary>
+        /// 获取所有表
+        /// </summary>
+        /// <param name="param"></param>
+        /// <returns></returns>
+        public DosResultList<string> GetTables(DbServiceParam param)
+        {
+            if (param.OsClient.DosIsNullOrWhiteSpace())
+            {
+                return new DosResultList<string>(0, null, DDLConfig.GetLang(param.OsClient, "ParamError", param._Lang));
+            }
+            //取所有表
+            //var sql = @"select TABLE_NAME from information_schema.TABLES";
+            var sql = @"SELECT table_name FROM user_tables";
+
+            //var dbSession = OsClient.GetClient(param.OsClient).DbRead;
+
+            //if (!param.DataBaseId.DosIsNullOrWhiteSpace())
+            //{
+            //    var clientModel = OsClient.GetClient(param.OsClient);
+            //    dbSession = OsClient.GetClientDbSession(clientModel, param.DataBaseId);
+            //}
+
+            var dosSession = param.DbSession;
+            var result = dosSession.FromSql(sql).ToList<string>();
+            return new DosResultList<string>(1, result);
+        }
+
+        /// <summary>
+        /// 获取某张表的所有物理字段
+        /// </summary>
+        /// <param name="param"></param>
+        /// <returns></returns>
+        public DosResultList<information_schema_columns> GetColumns(DbServiceParam param)
+        {
+            var getAllFieldSql = @"SELECT 
+                                            COLUMN_NAME as ""column_name"", 
+                                            DATA_TYPE as ""data_type"",
+                                            COLUMN_NAME as ""column_comment"",
+                                            'YES' as ""is_nullable"",
+                                            DATA_TYPE as ""column_type""
+                                            FROM all_tab_columns
+                                            WHERE table_name = '{0}'";
+            var realFieldList = param.DbSession.FromSql(string.Format(getAllFieldSql, param.TableName)).ToList<information_schema_columns>();
+            return new DosResultList<information_schema_columns>(1, realFieldList);
+        }
+
+        /// <summary>
+        /// 
+        /// </summary>
+        /// <param name="tableName"></param>
+        /// <param name="sql"></param>
+        /// <param name="pageIndex"></param>
+        /// <param name="pageSize"></param>
+        /// <param name="dbVersion"></param>
+        /// <returns></returns>
+        public string GetPaginationSql(string tableName, string sql, int pageIndex, int pageSize, string dbVersion = "")
+        {
+            //2024-04-09：oracle 11g分页处理（注意：dos.orm也有相关处理）
+            if (!dbVersion.DosIsNullOrWhiteSpace() && dbVersion.ToLower() == "11g")
+            {
+                var result = " SELECT * FROM ( SELECT PAGETABLE.*, ROWNUM PAGENUMBER FROM ( " + sql;
+                result += $" ) PAGETABLE WHERE ROWNUM <= {pageIndex * pageSize} ) WHERE PAGENUMBER >= {(pageIndex - 1) * pageSize + 1} ";
+                return result;
+            }
+            else
+            {
+                //oracle 12c分页
+                var result = sql + $" OFFSET {(pageIndex - 1) * pageSize} ROWS FETCH NEXT {pageSize} ROW ONLY ";
+                return result;
+            }
+        }
+
+        /// <summary>
+        /// SQL注入防护：验证标识符（表名/字段名）是否合法
+        /// </summary>
+        private static bool IsValidIdentifier(string identifier)
+        {
+            if (string.IsNullOrWhiteSpace(identifier))
+                return false;
+            return System.Text.RegularExpressions.Regex.IsMatch(identifier, @"^[a-zA-Z_][a-zA-Z0-9_]*$");
+        }
+
+        public DosResult GetTableIndexes(DbServiceParam param)
+        {
+            try
+            {
+                if (param.TableName.DosIsNullOrWhiteSpace() || param.DbSession == null)
+                    return new DosResult(0, null, "参数错误");
+                if (!IsValidIdentifier(param.TableName))
+                    return new DosResult(0, null, "表名不合法");
+                var sql = $"SELECT INDEX_NAME, COLUMN_NAME, UNIQUENESS, INDEX_TYPE FROM ALL_IND_COLUMNS AIC JOIN ALL_INDEXES AI ON AIC.INDEX_NAME = AI.INDEX_NAME AND AIC.TABLE_NAME = AI.TABLE_NAME WHERE AIC.TABLE_NAME = '{param.TableName.ToUpper()}'";
+                var list = param.DbSession.FromSql(sql).ToArray();
+                return new DosResult(1, list);
+            }
+            catch (Exception ex)
+            {
+                return new DosResult(0, null, $"获取索引失败: {ex.Message}");
+            }
+        }
+
+        public DosResult AddIndex(DbServiceParam param)
+        {
+            try
+            {
+                if (param.TableName.DosIsNullOrWhiteSpace() || param.IndexName.DosIsNullOrWhiteSpace() || param.IndexColumns.DosIsNullOrWhiteSpace() || param.DbSession == null)
+                    return new DosResult(0, null, "参数错误");
+                if (!IsValidIdentifier(param.TableName) || !IsValidIdentifier(param.IndexName))
+                    return new DosResult(0, null, "表名或索引名不合法");
+                var columns = param.IndexColumns.Split(',').Select(c => c.Trim()).ToArray();
+                foreach (var col in columns)
+                    if (!IsValidIdentifier(col)) return new DosResult(0, null, $"字段名不合法: {col}");
+                var columnsSql = string.Join(", ", columns.Select(c => $"\"{c}\""));
+                var uniqueStr = param.IndexUnique ? "UNIQUE " : "";
+                var sql = $"CREATE {uniqueStr}INDEX \"{param.IndexName}\" ON \"{param.TableName}\" ({columnsSql})";
+                param.DbSession.FromSql(sql).ExecuteNonQuery();
+                return new DosResult(1, null, "索引创建成功");
+            }
+            catch (Exception ex)
+            {
+                return new DosResult(0, null, $"创建索引失败: {ex.Message}");
+            }
+        }
+
+        public DosResult DropIndex(DbServiceParam param)
+        {
+            try
+            {
+                if (param.IndexName.DosIsNullOrWhiteSpace() || param.DbSession == null)
+                    return new DosResult(0, null, "参数错误");
+                if (!IsValidIdentifier(param.IndexName))
+                    return new DosResult(0, null, "索引名不合法");
+                var sql = $"DROP INDEX \"{param.IndexName}\"";
+                param.DbSession.FromSql(sql).ExecuteNonQuery();
+                return new DosResult(1, null, "索引删除成功");
+            }
+            catch (Exception ex)
+            {
+                return new DosResult(0, null, $"删除索引失败: {ex.Message}");
+            }
+        }
+    }
+}
+

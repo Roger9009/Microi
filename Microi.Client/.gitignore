@@ -1,0 +1,42 @@
+.DS_Store
+node_modules
+node_modules/
+# dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+**/*.log
+
+tests/**/coverage/
+tests/e2e/reports
+selenium-debug.log
+
+# Microi.VSCode：Playwright E2E（自动追加）
+.microi-e2e/report/
+.microi-e2e/test-results/
+.microi-e2e/playwright-report/
+.microi-e2e/screenshots/
+.microi-e2e/.env.e2e
+.microi-e2e/.env.e2e.local
+
+# Editor directories and files
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.local
+
+package-lock.json
+yarn.lock
+localConfig.json
+.env
+src/views/webos/
+
+# 允许跟踪 bin/Release 目录下的配置文件
+!bin/Release/Dockerfile
+!bin/Release/default.conf
+!bin/Release/publish-*.sh
+!bin/Release/.gitignore
+test-results

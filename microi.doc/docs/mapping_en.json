@@ -1,0 +1,92 @@
+﻿{
+  "index.md": "Platform Introduction",
+  "apiengine-index.md": "API Engine Practice",
+
+  "case-index.md": "Success Cases",
+  
+  "internet": "Internet, B2C",
+  "hourse.md": "Internet Real Estate",
+  
+  "iot": "IoT",
+  "iot-case1.md": "Smart Home Middleware",
+
+  "erp": "ERP",
+  "erp-case1.md": "Apparel Production ERP [97 units sold]",
+
+  "oa": "OA System",
+  "os-case1.md": "Group/State-owned Enterprise OA + ERP",
+
+  "crm": "CRM",
+  "crm-case1.md": "Standard CRM Product",
+
+  "ims": "Smart Manufacturing",
+  "ims-case1.md": "Group Manufacturing Collaboration System",
+
+  "other": "Others",
+  "other-case1.md": "Maybach Physical Properties",
+
+  "getting-started": "Getting Started",
+  "start-use.md": "Quick Start",
+  "docker-run.md": "Docker Deployment",
+  "win-install-microi.md": "Windows Deployment",
+  "local-run-server.md": "Run Source Code Locally - Backend",
+  "local-run-client.md": "Run Source Code Locally - Frontend",
+
+  "v8-engine": "V8 Engine",
+  "api-engine.md": "API Engine",
+  "ai-apiengine.md": "AI Programming Guide",
+  "v8-server.md": "V8 Functions - Backend",
+  "v8-client.md": "V8 Functions - Frontend",
+  "form-engine.md": "FormEngine Usage",
+  "where.md": "Where Conditions",
+
+  "form-engine": "Form Engine",
+  "form-engine-info.md": "Form Engine Introduction",
+  "form-field-info.md": "Form & Field Properties, Events",
+  "form-custom-control.md": "Custom Components",
+  "form-datasource.md": "Component Data Source",
+  "model-engine.md": "Template Engine",
+  "all-form-component.md": "All Form Components",
+
+  "system-engine": "System Engine",
+  "app-store.md": "App Store",
+  "mqtt-engine.md": "MQTT Engine (IoT)",
+  "wf-engine.md": "Workflow Engine",
+  "saas-engine.md": "SaaS Engine",
+  "module-engine.md": "Module Engine",
+  "page-engine.md": "UI Engine",
+  "microi-ui.md": "Microi.UI",
+  "print-engine.md": "Print Engine",
+  "ai-engine.md": "AI Engine",
+  "translate-engine.md": "Translation Engine",
+  "search-engine.md": "Search Engine",
+  "job.md": "Job Scheduling",
+  "mq.md": "Message Queue",
+  "report-engine.md": "Report Engine",
+  "datasource-engine.md": "Data Source Engine",
+  "databases.md": "Database Extension",
+  "web-plug-engine.md": "Frontend Plugin Engine",
+
+  "ai-integrate": "AI Programming",
+  "ai-skills-integrate.md": "AI Skills Integration Guide",
+  "ai-mcp-integrate.md": "AI MCP Integration Guide",
+
+  "more": "Advanced Features",
+  "sys-config.md": "System Settings",
+  "copy-module.md": "Module Copy",
+  "hdfs.md": "Distributed Storage",
+  "office.md": "Office Online Editing",
+  "dos-result.md": "DosResult Explanation",
+  "db-dictionary.md": "Platform Database Table Description",
+
+  "about": "About",
+  "partner.md": "Become a Partner",
+  "microi-training-syllabus.md": "Training Syllabus",
+  "update-log.md": "📤 Changelog",
+  "template.md": "CSDN Article Template",
+
+  "export-excel.md": "Custom Excel Export",
+  "file-receive-download-upload.md": "File Receive, Download & Upload",
+  "js-float-error.md": "JS Floating Point Precision",
+  "datetime.md": "Date/Time Handling"
+}

@@ -1,0 +1,273 @@
+// 登录页面：隐藏导航栏、侧边栏、页脚，内容全屏
+body:has(.ai-login-page) {
+  .VPNav, .VPNavBar, .VPSidebar, .VPFooter, .VPLocalNav {
+    display: none !important;
+  }
+  .VPContent {
+    padding-top: 0 !important;
+  }
+  .VPDoc .container {
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  .VPDoc .content {
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
+  .VPDoc .content-container {
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
+  // 隐藏 vitepress 页面标题
+  .VPDoc h1, .VPDoc .header-anchor {
+    display: none !important;
+  }
+}
+
+.VPDoc.has-aside .content-container,
+.VPDoc.has-aside .container,
+.VPDoc.has-aside .content{
+	max-width: 100% !important;
+}
+
+// 浅色模式下的代码块样式修复
+html:not(.dark) {
+  div[class*="language-"],
+  .vp-code-group {
+    background-color: #1e1e1e !important;
+    
+    code {
+      color: #d4d4d4 !important;
+    }
+    
+    pre {
+      background-color: #1e1e1e !important;
+      
+      code {
+        color: #d4d4d4 !important;
+      }
+    }
+    
+    .line {
+      color: #d4d4d4 !important;
+    }
+  }
+  
+  // 代码块行号
+  .line-numbers-wrapper {
+    color: #858585 !important;
+  }
+}
+
+::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+	background-color: #d1d1d1;
+	border-radius: 20px;
+	box-shadow: inset 0 0 0 white;
+}
+
+.VPHome {
+	padding-bottom: 0px !important;
+
+	.image-bg {
+		background-image: linear-gradient(-45deg, #37CD9B 70%, #F8CD7A 50%);
+		filter: blur(70px);
+		width: 256px;
+		height: 256px;
+	}
+}
+
+// 暗黑模式样式
+.dark {
+	::-webkit-scrollbar-thumb {
+		background-color: #4d4c4c;
+	}
+}
+
+/**
+ * Colors
+ * -------------------------------------------------------------------------- */
+
+:root {
+	--vp-c-brand: #04CB88;
+	--vp-c-brand-light: #0ECD8D;
+	--vp-c-brand-lighter: #37CD9B;
+	--vp-c-brand-lightest: #31CB98;
+	--vp-c-brand-dark: #3CDBA6;
+	--vp-c-brand-darker: #2EAD83;
+	//--vp-c-brand-dimm: #196048;
+	--vp-layout-max-width: 100%;
+}
+
+/**
+ * Component: Button
+ * -------------------------------------------------------------------------- */
+
+:root {
+	--vp-button-brand-border: var(--vp-c-brand-light);
+	--vp-button-brand-text: var(--vp-c-white);
+	--vp-button-brand-bg: var(--vp-c-brand);
+	--vp-button-brand-hover-border: var(--vp-c-brand-light);
+	--vp-button-brand-hover-text: var(--vp-c-white);
+	--vp-button-brand-hover-bg: var(--vp-c-brand-light);
+	--vp-button-brand-active-border: var(--vp-c-brand-light);
+	--vp-button-brand-active-text: var(--vp-c-white);
+	--vp-button-brand-active-bg: var(--vp-button-brand-bg);
+}
+
+/**
+ * Component: Home
+ * -------------------------------------------------------------------------- */
+
+:root {
+	--vp-home-hero-name-color: transparent;
+	--vp-home-hero-name-background: -webkit-linear-gradient(
+			120deg,
+			var(--vp-c-brand-lightest) 40%,
+			var(--vp-c-brand-darker)
+	);
+
+	--vp-home-hero-image-background-image: linear-gradient(-45deg, var(--vp-c-brand-lightest) 30%, var(--vp-c-brand) 50%);
+	--vp-home-hero-image-filter: blur(40px);
+}
+
+@media (min-width: 640px) {
+	:root {
+		--vp-home-hero-image-filter: blur(56px);
+	}
+}
+
+@media (min-width: 960px) {
+	:root {
+		--vp-home-hero-image-filter: blur(72px);
+	}
+}
+
+/**
+ * Component: Custom Block
+ * -------------------------------------------------------------------------- */
+
+:root {
+	--vp-custom-block-tip-border: var(--vp-c-brand);
+	--vp-custom-block-tip-text: var(--vp-c-brand-darker);
+	--vp-custom-block-tip-bg: var(--vp-c-brand-dimm);
+}
+
+.dark {
+	--vp-custom-block-tip-border: var(--vp-c-brand);
+	--vp-custom-block-tip-text: var(--vp-c-brand-lightest);
+	--vp-custom-block-tip-bg: var(--vp-c-brand-dimm);
+}
+
+/**
+ * Component: Algolia
+ * -------------------------------------------------------------------------- */
+
+.DocSearch {
+	--docsearch-primary-color: var(--vp-c-brand) !important;
+}
+
+/**
+ * 文字激活样式
+ * -------------------------------------------------------------------------- */
+:root {
+	--vp-c-indigo-1: var(--vp-c-brand-light);
+	--vp-c-indigo-2: var(--vp-c-brand-lighter);
+	--vp-c-indigo-3: var(--vp-c-brand-lightest);
+
+}
+
+
+.dark {
+	--vp-c-indigo-1: var(--vp-c-brand-lightest);
+	--vp-c-indigo-2: var(--vp-c-brand-lighter);
+	--vp-c-indigo-3: var(--vp-c-brand-light);
+	--vp-c-indigo-soft: #491307;
+}
+
+.vp-doc :not(pre) > code {
+	color: red;
+}
+
+///* .vitepress\theme\style\var.css */
+///* 提示框背景颜色 */
+//:root {
+//	--vp-custom-block-tip-bg: var(--vp-c-green-soft);
+//}
+//
+///* 提示框 */
+//.custom-block.tip {
+//	border-color: var(--vp-c-green-2);
+//}
+//
+///* 警告框 */
+//.custom-block.warning {
+//	/* border-color: #d97706; */
+//	border-color: var(--vp-c-yellow-soft);
+//}
+//
+///* 危险框 */
+//.custom-block.danger {
+//	/* border-color: #f43f5e; */
+//	border-color: var(--vp-c-red-2);
+//}
+//
+//
+/**
+ * 日文支持
+ * -------------------------------------------------------------------------- */
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Sans", "Noto Sans CJK JP", sans-serif;
+}
+
+/**
+ * 联系我们页面表格美化
+ * -------------------------------------------------------------------------- */
+.vp-doc table {
+  // 表格居中显示
+  margin: 2rem auto;
+  
+  // 表格单元格样式优化
+  td, th {
+    // padding: 1.5rem 1rem !important;
+    vertical-align: middle !important;
+    border: 1px solid var(--vp-c-divider) !important;
+  }
+  
+  // 表头样式
+  thead th {
+    background-color: var(--vp-c-bg-soft);
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+  
+  // 二维码图片样式优化
+  img {
+    margin: 0.5rem auto !important;
+    display: block !important;
+    border-radius: 8px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    
+    &:hover {
+      transform: scale(1.05);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    }
+  }
+}
+
+// 暗色模式下的表格优化
+.dark .vp-doc table {
+  img {
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+    
+    &:hover {
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+  }
+}

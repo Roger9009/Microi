@@ -1,0 +1,38 @@
+{
+	"name": "microi-docs",
+	"version": "1.0.0",
+	"description": "Microi吾码框架文档",
+	"type": "module",
+	"author": {
+		"name": "Microi风闲",
+		"email": "359681091@qq.com",
+		"url": "https://lisaisai.blog.csdn.net/?type=blog"
+	},
+	"license": "MIT",
+	"homepage": "https://microi.net/",
+	"scripts": {
+		"docs:dev": "vitepress dev docs --host",
+		"dev": "vitepress dev docs --host",
+		"docs:build": "vitepress build docs",
+		"build": "vitepress build docs",
+		"docs:preview": "vitepress preview docs"
+	},
+	"devDependencies": {
+		"@types/node": "^25.0.9",
+		"@types/three": "^0.183.1",
+		"markdown-it-custom-attrs": "^1.0.2",
+		"sass": "^1.97.2",
+		"typescript": "^5.9.3",
+		"vite": "^7.3.1",
+		"vitepress": "1.6.4",
+		"vue": "^3.5.26"
+	},
+	"dependencies": {
+		"@alicloud/alimt20181012": "^1.4.2",
+		"@alicloud/openapi-client": "^0.4.15",
+		"@alicloud/pop-core": "^1.8.0",
+		"marked": "^17.0.1",
+		"p-limit": "^7.2.0",
+		"three": "^0.183.2"
+	}
+}

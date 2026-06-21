@@ -1,0 +1,1421 @@
+<template>
+    <div class="diy-fileupload">
+        <el-upload
+            v-if="FormMode != 'View' && field.Visible"
+            ref="uploadRef"
+            drag
+            :multiple="field.Config.FileUpload.Multiple === true"
+            :limit="field.Config.FileUpload.MaxCount"
+            :action="GetUploadUrl(field)"
+            :data="{
+                Path: '/file',
+                Limit: field.Config.FileUpload.Limit,
+                Preview: false
+            }"
+            :headers="GetUploadHeaders()"
+            :before-upload="(file) => BeforeFileUpload(file)"
+            :on-exceed="() => onExceed()"
+            :on-success="(result, file, fileList) => FileUploadSuccess(result, file, fileList)"
+            :on-remove="(file, fileList) => FileUploadRemove(file, fileList)"
+            :show-file-list="false"
+        >
+            <el-icon class="el-icon--upload">
+                <upload-filled />
+            </el-icon>
+            <div class="el-upload__text">拖拽文件到此处，或<em>点击上传</em></div>
+            <template #tip>
+                <div class="el-upload__tip">{{ field.Config.FileUpload.Tips }}</div>
+            </template>
+        </el-upload>
+
+        <!-- 单文件显示 - 编辑/新增模式 -->
+        <div v-if="FormMode != 'View' && field.Visible && !field.Config.FileUpload.Multiple && !DiyCommon.IsNull(modelValue) && modelValue != '正在上传中...'"
+            class="single-file-display">
+            <div class="file-info">
+                <el-icon class="file-icon" @click="GoUrl(FormDiyTableModel[field.Name + '_' + field.Name + '_RealPath'], getSingleFileMeta())" style="cursor: pointer;">
+                    <component :is="getFileIcon(GetFileName(modelValue))" />
+                </el-icon>
+                <div class="file-detail">
+                    <el-input 
+                        v-if="FormMode == 'Edit' || FormMode == 'Add'"
+                        v-model="singleFileName" 
+                        size="small"
+                        class="file-name-input"
+                        @change="updateSingleFileName"
+                    />
+                    <span
+                        v-else
+                        class="file-name" 
+                        @click="GoUrl(FormDiyTableModel[field.Name + '_' + field.Name + '_RealPath'], getSingleFileMeta())"
+                    >
+                        {{ GetFileName(modelValue) }}
+                    </span>
+                    <span class="file-size">{{ getSingleFileSize() }}</span>
+                    <el-button v-if="isCadFile(GetFileName(modelValue))" @click="openCadPreview(FormDiyTableModel[field.Name + '_' + field.Name + '_RealPath'], GetFileName(modelValue), null)" type="primary" size="small" :icon="View" link>在线预览</el-button>
+                    <el-button @click="ConfirmDelSingleUpload()" type="danger" size="small" :icon="Delete" link>删除</el-button>
+                </div>
+            </div>
+            
+        </div>
+
+        <!-- 查看模式 - 单文件 -->
+        <div v-if="FormMode == 'View' && !field.Config.FileUpload.Multiple && !DiyCommon.IsNull(modelValue) && modelValue != '正在上传中...'"
+            class="single-file-display view-mode">
+            <div class="file-info">
+                <el-icon class="file-icon">
+                    <component :is="getFileIcon(GetFileName(modelValue))" />
+                </el-icon>
+                <div class="file-detail">
+                    <span class="file-name" @click="GoUrl(FormDiyTableModel[field.Name + '_' + field.Name + '_RealPath'], getSingleFileMeta())">
+                        {{ GetFileName(modelValue) }}
+                    </span>
+                    <span class="file-size">{{ getSingleFileSize() }}</span>
+                    <el-button v-if="isCadFile(GetFileName(modelValue))" @click="openCadPreview(FormDiyTableModel[field.Name + '_' + field.Name + '_RealPath'], GetFileName(modelValue), null)" type="primary" size="small" :icon="View" link>在线预览</el-button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 多文件显示 -->
+        <div
+            v-if="field.Config.FileUpload.Multiple == true && showMultipleFileList"
+            ref="sortableContainer"
+            class="multiple-files-list"
+        >
+            <div v-for="(file, index) in fileListComputed" :key="file.Id" class="file-item" :data-id="file.Id">
+                <div class="file-item-content">
+                    <el-icon class="drag-handle"><Rank /></el-icon>
+                    <el-icon 
+                        class="file-icon" 
+                        @click="GoUrl(FormDiyTableModel[field.Name + '_' + file.Id + '_RealPath'], file)"
+                        style="cursor: pointer;"
+                    >
+                        <component :is="getFileIcon(file.Name)" />
+                    </el-icon>
+                    <div class="file-details">
+                        <div class="file-name-wrapper">
+                            <el-input 
+                                v-if="FormMode == 'Edit' || FormMode == 'Add'" 
+                                v-model="file.Name" 
+                                size="small"
+                                class="file-name-input"
+                            />
+                            <span 
+                                v-else
+                                class="file-name" 
+                                @click="GoUrl(FormDiyTableModel[field.Name + '_' + file.Id + '_RealPath'], file)"
+                            >
+                                {{ file.Name }}
+                            </span>
+                        </div>
+                        <span class="file-size">{{ formatFileSize(file.Size) }}</span>
+                        <el-tag 
+                            v-if="file.State == 0" 
+                            type="info" 
+                            size="small"
+                        >
+                            待上传
+                        </el-tag>
+                        <el-tag 
+                            v-else-if="file.State == 1" 
+                            type="success" 
+                            size="small"
+                            style="cursor: pointer;"
+                            @click="GoUrl(FormDiyTableModel[field.Name + '_' + file.Id + '_RealPath'], file)"
+                        >
+                            已上传
+                        </el-tag>
+                        <el-tag v-else type="danger" size="small">失败</el-tag>
+                        <el-button 
+                            v-if="isCadFile(file.Name)" 
+                            size="small" 
+                            type="primary" 
+                            :icon="View" 
+                            @click="openCadPreview(FormDiyTableModel[field.Name + '_' + file.Id + '_RealPath'], file.Name, file)"
+                            link
+                        >在线预览</el-button>
+                        <el-button 
+                            v-if="FormMode != 'View'" 
+                            size="small" 
+                            type="danger" 
+                            :icon="Delete" 
+                            @click="ConfirmDelUploadFiles(file)"
+                            link
+                        />
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 配置弹窗 - 设计模式下可用 -->
+        <el-dialog
+            v-if="configDialogVisible"
+            v-model="configDialogVisible"
+            title="文件上传配置"
+            width="500px"
+            :close-on-click-modal="false"
+            destroy-on-close
+            append-to-body
+        >
+            <el-form label-width="140px" label-position="left" size="small">
+                <el-form-item label="禁止匿名访问">
+                    <el-switch v-model="configForm.Limit" active-color="#ff6c04" inactive-color="#ccc" />
+                    <div class="form-item-tip">开启后文件将通过私有链接访问</div>
+                </el-form-item>
+                
+                <el-form-item label="多文件上传">
+                    <el-switch v-model="configForm.Multiple" active-color="#ff6c04" inactive-color="#ccc" />
+                    <div class="form-item-tip">开启后支持上传多个文件</div>
+                </el-form-item>
+                
+                <el-form-item label="最大允许上传个数">
+                    <el-input-number v-model="configForm.MaxCount" :min="1" :max="100" />
+                    <div class="form-item-tip">多文件上传时的最大数量限制</div>
+                </el-form-item>
+                
+                <el-form-item label="上传说明">
+                    <el-input v-model="configForm.Tips" placeholder="如：支持jpg、png、pdf格式" />
+                    <div class="form-item-tip">显示在上传区域下方的提示文字</div>
+                </el-form-item>
+                
+                <el-form-item label="最大体积(M)">
+                    <el-input-number v-model="configForm.MaxSize" :min="1" :max="1024" />
+                    <div class="form-item-tip">单个文件的最大体积限制，单位MB</div>
+                </el-form-item>
+
+                <el-form-item label="保存为完整路径">
+                    <el-switch v-model="configForm.SaveFullPath" active-color="#ff6c04" inactive-color="#ccc" />
+                    <div class="form-item-tip">开启后保存时Path将存储完整URL（含文件服务器域名），而非相对路径</div>
+                </el-form-item>
+
+                <el-divider content-position="left">V8引擎代码</el-divider>
+
+                <el-form-item label="上传前V8引擎代码">
+                    <el-button 
+                        type="primary" 
+                        :icon="Edit" 
+                        @click="openCodeEditor('BeforeUploadV8', '上传前V8引擎代码')"
+                    >
+                        编辑代码{{ getCodeLength(configForm.BeforeUploadV8) }}
+                    </el-button>
+                    <div class="form-item-tip">上传前执行的V8引擎代码，V8.Result返回false可阻止上传</div>
+                </el-form-item>
+
+                <el-form-item label="上传成功后V8引擎代码">
+                    <el-button 
+                        type="primary" 
+                        :icon="Edit" 
+                        @click="openCodeEditor('UploadSuccessV8', '上传成功后V8引擎代码')"
+                    >
+                        编辑代码{{ getCodeLength(configForm.UploadSuccessV8) }}
+                    </el-button>
+                    <div class="form-item-tip">上传成功后执行的V8引擎JavaScript代码</div>
+                </el-form-item>
+            </el-form>
+            <template #footer>
+                <el-button @click="configDialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="saveConfig">确定</el-button>
+            </template>
+        </el-dialog>
+
+        <!-- 代码编辑器弹窗 -->
+        <el-dialog
+            v-if="codeEditorVisible"
+            v-model="codeEditorVisible"
+            :title="codeEditorTitle"
+            width="80%"
+            :close-on-click-modal="false"
+            destroy-on-close
+            append-to-body
+        >
+            <diy-code-editor
+                v-model="codeEditorValue"
+                :field="{
+                    Name: codeEditorType,
+                    Component: 'CodeEditor',
+                    Config: {
+                        CodeEditor: {
+                            Language: 'javascript',
+                            Theme: 'vs-dark'
+                        }
+                    }
+                }"
+                :FormDiyTableModel="{ [codeEditorType]: codeEditorValue }"
+                :FormMode="'Edit'"
+                :ReadonlyFields="[]"
+                :FieldReadonly="false"
+            />
+            <template #footer>
+                <el-button @click="codeEditorVisible = false">取消</el-button>
+                <el-button type="primary" @click="saveCodeEditor">确定</el-button>
+            </template>
+        </el-dialog>
+
+        <!-- 图片预览 -->
+        <teleport to="body">
+            <el-image-viewer
+                v-if="imagePreviewVisible"
+                :url-list="imagePreviewList"
+                :initial-index="0"
+                :hide-on-click-modal="true"
+                @close="imagePreviewVisible = false"
+            />
+        </teleport>
+    </div>
+</template>
+
+<script setup>
+import { ref, computed, getCurrentInstance, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
+import { UploadFilled, Document, Delete, Rank, Picture, FolderOpened, Grid, VideoPlay, Tickets, Edit, View } from '@element-plus/icons-vue';
+import { ElMessageBox, ElImageViewer } from 'element-plus';
+import Sortable from 'sortablejs';
+import { useDiyStore } from "@/pinia";
+
+// 禁用属性继承
+defineOptions({
+    inheritAttrs: false
+});
+
+// Props定义
+const props = defineProps({
+    modelValue: {
+        type: [String, Array, Object],
+        default: ''
+    },
+    field: {
+        type: Object,
+        required: true
+    },
+    FormDiyTableModel: {
+        type: Object,
+        required: true
+    },
+    FormMode: {
+        type: String,
+        default: ''
+    },
+    SysConfig: {
+        type: Object,
+        default: () => ({})
+    },
+    DiyTableModel: {
+        type: Object,
+        default: () => ({})
+    },
+    TableRowId: {
+        type: String,
+        default: ''
+    }
+});
+
+// Emits定义
+const emit = defineEmits(['update:modelValue', 'CallbackRunV8Code', 'CallbackGoUrl']);
+
+// 获取全局属性（正确的Vue3方式）
+const instance = getCurrentInstance();
+const DiyCommon = instance.appContext.config.globalProperties.DiyCommon;
+const DiyApi = instance.appContext.config.globalProperties.DiyApi;
+const diyStore = useDiyStore();
+const SysConfig = computed(() => ({
+    ...(diyStore.SysConfig || {}),
+    ...(props.SysConfig || {})
+}));
+
+// 响应式数据
+const uploadRef = ref(null);
+const sortableContainer = ref(null);
+let sortableInstance = null;
+
+// 单文件文件名编辑
+const singleFileName = ref('');
+
+// 图片预览相关
+const imagePreviewVisible = ref(false);
+const imagePreviewList = ref([]);
+const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp', 'ico', 'tiff', 'tif'];
+const isImageFile = (fileNameOrUrl) => {
+    if (!fileNameOrUrl) return false;
+    // 先去掉查询参数和hash
+    let clean = fileNameOrUrl.split('?')[0].split('#')[0];
+    const ext = clean.toLowerCase().split('.').pop();
+    return IMAGE_EXTENSIONS.includes(ext);
+};
+
+// 配置弹窗相关
+const configDialogVisible = ref(false);
+const configForm = ref({
+    Limit: false,
+    Multiple: false,
+    MaxCount: 10,
+    Tips: '',
+    MaxSize: 10,
+    SaveFullPath: false,
+    BeforeUploadV8: '',
+    UploadSuccessV8: ''
+});
+
+// 代码编辑器弹窗相关
+const codeEditorVisible = ref(false);
+const codeEditorType = ref('');
+const codeEditorValue = ref('');
+const codeEditorTitle = ref('');
+
+// 打开配置弹窗
+const openConfig = () => {
+    // 初始化配置表单
+    if (!props.field.Config) {
+        props.field.Config = {};
+    }
+    if (!props.field.Config.FileUpload) {
+        props.field.Config.FileUpload = {};
+    }
+    configForm.value = {
+        Limit: props.field.Config.FileUpload.Limit || false,
+        Multiple: props.field.Config.FileUpload.Multiple || false,
+        MaxCount: props.field.Config.FileUpload.MaxCount || 10,
+        Tips: props.field.Config.FileUpload.Tips || '',
+        MaxSize: props.field.Config.FileUpload.MaxSize || 10,
+        SaveFullPath: props.field.Config.FileUpload.SaveFullPath || false,
+        BeforeUploadV8: props.field.Config.Upload?.BeforeUploadV8 || '',
+        UploadSuccessV8: props.field.Config.Upload?.UploadSuccessV8 || ''
+    };
+    configDialogVisible.value = true;
+};
+
+// 保存配置
+const saveConfig = () => {
+    // 保存配置到 field.Config.FileUpload
+    if (!props.field.Config.FileUpload) {
+        props.field.Config.FileUpload = {};
+    }
+    props.field.Config.FileUpload.Limit = configForm.value.Limit;
+    props.field.Config.FileUpload.Multiple = configForm.value.Multiple;
+    props.field.Config.FileUpload.MaxCount = configForm.value.MaxCount;
+    props.field.Config.FileUpload.Tips = configForm.value.Tips;
+    props.field.Config.FileUpload.MaxSize = configForm.value.MaxSize;
+    props.field.Config.FileUpload.SaveFullPath = configForm.value.SaveFullPath;
+    
+    // 保存Upload V8配置
+    if (!props.field.Config.Upload) {
+        props.field.Config.Upload = {};
+    }
+    props.field.Config.Upload.BeforeUploadV8 = configForm.value.BeforeUploadV8;
+    props.field.Config.Upload.UploadSuccessV8 = configForm.value.UploadSuccessV8;
+    
+    configDialogVisible.value = false;
+    DiyCommon.Tips('配置已保存', true);
+};
+
+// V8代码编辑器相关方法
+const getCodeLength = (value) => {
+    if (!value) return '';
+    const len = String(value).length;
+    return len > 0 ? `(${len})` : '';
+};
+
+const openCodeEditor = (type, title) => {
+    codeEditorType.value = type;
+    codeEditorTitle.value = title;
+    codeEditorValue.value = configForm.value[type] || '';
+    codeEditorVisible.value = true;
+};
+
+const saveCodeEditor = () => {
+    configForm.value[codeEditorType.value] = codeEditorValue.value;
+    codeEditorVisible.value = false;
+};
+
+// 暴露方法给父组件
+defineExpose({
+    openConfig
+});
+
+// 处理兼容老数据：将字符串转换为对象格式
+const normalizeValue = (value) => {
+    if (DiyCommon.IsNull(value) || value === '正在上传中...') {
+        return value;
+    }
+    
+    // 如果是数组，直接返回
+    if (Array.isArray(value)) {
+        return value;
+    }
+    
+    // 如果已经是对象，直接返回
+    if (typeof value === 'object' && value !== null) {
+        return value;
+    }
+    
+    // 如果是字符串
+    if (typeof value === 'string') {
+        // 如果以{开头，说明是JSON字符串，解析它
+        if (value.startsWith('{')) {
+            try {
+                return JSON.parse(value);
+            } catch (e) {
+                console.error('JSON解析失败:', e);
+                // 解析失败，按老数据处理
+            }
+        }
+        
+        // 老数据（纯路径字符串），包装成新格式
+        if (value && value !== '[]' && value !== '[ ]') {
+            const fileName = value.split('/').pop();
+            return {
+                Id: 'legacy_' + new Date().getTime(),
+                Name: fileName,
+                Size: '',
+                CreateTime: '',
+                Path: value,
+                State: 1
+            };
+        }
+    }
+    
+    return value;
+};
+
+// 计算属性
+const getMultipleFlag = computed(() => {
+    return props.field.Config.FileUpload.Multiple === true || props.field.Config.FileUpload.Multiple === 'true';
+});
+
+// 是否显示多文件列表
+const showMultipleFileList = computed(() => {
+    return !DiyCommon.IsNull(props.modelValue) &&
+           props.modelValue != '正在上传中...' &&
+           Array.isArray(props.modelValue) &&
+           props.modelValue.length > 0;
+});
+
+// 文件列表计算属性 - 用于响应式更新
+const fileListComputed = computed(() => {
+    if (!Array.isArray(props.modelValue)) return [];
+    return props.modelValue.filter(file => file && file.Id);
+});
+
+// 根据文件扩展名获取图标组件
+const getFileIcon = (fileName) => {
+    if (!fileName) return Document;
+    const ext = fileName.toLowerCase().split('.').pop();
+    
+    const iconMap = {
+        // 图片
+        jpg: Picture, jpeg: Picture, png: Picture, gif: Picture, bmp: Picture, svg: Picture, webp: Picture,
+        // 文档
+        doc: Document, docx: Document, txt: Document, rtf: Document, md: Document,
+        // 表格
+        xls: Grid, xlsx: Grid, csv: Grid,
+        // PDF
+        pdf: Tickets,
+        // 压缩包
+        zip: FolderOpened, rar: FolderOpened, '7z': FolderOpened, tar: FolderOpened, gz: FolderOpened,
+        // 视频
+        mp4: VideoPlay, avi: VideoPlay, mkv: VideoPlay, mov: VideoPlay, wmv: VideoPlay, flv: VideoPlay,
+        // 音频
+        // mp3: AudioFilled, wav: AudioFilled, flac: AudioFilled, ape: AudioFilled, aac: AudioFilled
+    };
+    
+    return iconMap[ext] || Document;
+};
+
+// 判断是否为CAD文件（支持在线预览的类型）
+const CAD_EXTENSIONS = ['dwg', 'step', 'stp'];
+const isCadFile = (fileName) => {
+    if (!fileName) return false;
+    const ext = fileName.toLowerCase().split('.').pop();
+    return CAD_EXTENSIONS.includes(ext);
+};
+
+// 获取CAD文件对应的转换后预览文件的存储路径（基于原始存储路径）
+const getCadPreviewStoragePath = (storagePath) => {
+    if (!storagePath) return '';
+    // 去掉查询参数，只处理路径本身
+    const pathOnly = storagePath.split('?')[0];
+    const ext = pathOnly.toLowerCase().split('.').pop();
+    const lastDotIndex = pathOnly.lastIndexOf('.');
+    const base = pathOnly.substring(0, lastDotIndex);
+    if (ext === 'dwg') return base + '_preview.dxf';
+    if (ext === 'step' || ext === 'stp') return base + '_preview.stl';
+    return '';
+};
+
+// 从modelValue或文件对象中提取存储路径（不是RealPath）
+const getFileStoragePath = (fileObj) => {
+    // 多文件模式：fileObj 直接有 .Path
+    if (fileObj && typeof fileObj === 'object' && fileObj.Path) return fileObj.Path;
+    // 单文件模式：从 modelValue 解析
+    const normalized = normalizeValue(props.modelValue);
+    if (normalized && typeof normalized === 'object' && normalized.Path) return normalized.Path;
+    // 兜底：如果是字符串路径
+    if (typeof props.modelValue === 'string' && props.modelValue.startsWith('/')) return props.modelValue;
+    return '';
+};
+
+// 打开CAD文件预览（在新浏览器标签页中打开）
+const openCadPreview = (url, fileName, fileObj) => {
+    // 优先用存储路径来计算预览文件路径
+    const storagePath = fileObj ? (fileObj.Path || '') : getFileStoragePath();
+    const previewStoragePath = getCadPreviewStoragePath(storagePath || url);
+    
+    if (!previewStoragePath) {
+        console.warn('openCadPreview: 无法计算预览路径', { url, storagePath });
+        DiyCommon.Tips('无法获取预览文件路径', false);
+        return;
+    }
+
+    const isLimit = props.field.Config?.FileUpload?.Limit === true;
+    
+    if (isLimit) {
+        // 私有文件：先获取预览文件的签名URL，再打开
+        DiyCommon.Tips('正在获取预览文件...', true);
+        DiyCommon.Post(
+            '/api/HDFS/GetPrivateFileUrl',
+            {
+                FilePathName: previewStoragePath,
+                HDFS: SysConfig.value.HDFS || 'Aliyun',
+                FormEngineKey: props.DiyTableModel.Name || props.field.TableId,
+                FormDataId: props.TableRowId,
+                FieldId: props.field.Id
+            },
+            (result) => {
+                if (DiyCommon.Result(result) && result.Data) {
+                    const params = new URLSearchParams({ url: result.Data, name: fileName || '' });
+                    window.open(`#/mic/cad-preview?${params.toString()}`, '_blank', 'noopener,noreferrer');
+                } else {
+                    DiyCommon.Tips('预览文件获取失败，可能文件尚未转换完成', false);
+                }
+            },
+            () => {
+                DiyCommon.Tips('预览文件获取失败', false);
+            }
+        );
+    } else {
+        // 公开文件：直接用GetServerPath拼URL
+        const previewUrl = DiyCommon.GetServerPath(previewStoragePath);
+        const params = new URLSearchParams({ url: previewUrl, name: fileName || '' });
+        window.open(`#/mic/cad-preview?${params.toString()}`, '_blank', 'noopener,noreferrer');
+    }
+};
+
+// 初始化拖动排序
+const initSortable = () => {
+    if (sortableContainer.value && props.FormMode != 'View') {
+        sortableInstance = Sortable.create(sortableContainer.value, {
+            animation: 150,
+            handle: '.drag-handle',
+            onEnd: (evt) => {
+                const { oldIndex, newIndex } = evt;
+                if (oldIndex === newIndex) return;
+                
+                const files = [...props.modelValue];
+                const movedItem = files.splice(oldIndex, 1)[0];
+                files.splice(newIndex, 0, movedItem);
+                
+                emit('update:modelValue', files);
+                console.log('文件排序更新:', files);
+            }
+        });
+    }
+};
+
+// 获取上传URL
+const GetUploadUrl = (field) => {
+    return DiyApi.Upload();
+};
+
+// 获取上传请求头
+const GetUploadHeaders = () => {
+    return {
+        'authorization': 'Bearer ' + DiyCommon.Authorization()
+    };
+};
+
+// 上传文件超出限制
+const onExceed = () => {
+    DiyCommon.Tips(`最多只能上传${props.field.Config.FileUpload.MaxCount}个文件`, false);
+};
+
+// 上传前的准备逻辑（提取为独立函数，供V8事件回调使用）
+const setupBeforeFileUpload = (file) => {
+    if (!getMultipleFlag.value) {
+        // 单文件模式：设置上传中状态
+        props.FormDiyTableModel[props.field.Name] = '正在上传中...';
+        emit('update:modelValue', '正在上传中...');
+    } else {
+        // 多文件模式：添加State=0的占位文件
+        if (!Array.isArray(props.FormDiyTableModel[props.field.Name])) {
+            props.FormDiyTableModel[props.field.Name] = [];
+        }
+        props.FormDiyTableModel[props.field.Name].push({
+            Id: file.uid,
+            State: 0,
+            Name: file.name,
+            Size: file.size
+        });
+        emit('update:modelValue', props.FormDiyTableModel[props.field.Name]);
+    }
+};
+
+// 上传前的钩子
+const BeforeFileUpload = (file) => {
+    // 上传前V8事件
+    if (props.field.Config && props.field.Config.Upload && props.field.Config.Upload.BeforeUploadV8) {
+        return new Promise((resolve, reject) => {
+            emit('CallbackRunV8Code', {
+                field: props.field,
+                thisValue: file,
+                _v8Code: props.field.Config.Upload.BeforeUploadV8,
+                callback: (result) => {
+                    if (result === false) {
+                        reject(); // 阻止上传
+                        return;
+                    }
+                    setupBeforeFileUpload(file);
+                    resolve(true);
+                }
+            });
+        });
+    }
+    
+    setupBeforeFileUpload(file);
+    return true;
+};
+
+// 文件上传移除
+const FileUploadRemove = (file, fileList) => {
+    if (!props.field.Config.FileUpload.Multiple) {
+        props.FormDiyTableModel[props.field.Name] = '';
+        emit('update:modelValue', '');
+    }
+};
+
+// 上传成功的钩子
+const FileUploadSuccess = (result, file, fileList) => {
+    console.log('=== FileUploadSuccess 被调用了 ===');
+    console.log('原始 result:', result);
+    console.log('原始 file:', file);
+    console.log('原始 file.response:', file.response);
+    console.log('原始 fileList:', fileList);
+    console.log('fieldName:', props.field.Name);
+    console.log('isMultiple:', getMultipleFlag.value);
+    console.log('Limit:', props.field.Config.FileUpload.Limit);
+    
+    // 检查 DiyCommon.Result 的返回值
+    const isSuccess = DiyCommon.Result(result);
+    console.log('DiyCommon.Result(result) 返回:', isSuccess);
+    
+    if (isSuccess) {
+        // 关键修复：使用 file.response.Data 而不是 result.Data
+        const responseData = file.response?.Data || result.Data;
+        const uploadedFileId = responseData.Id || file.uid;
+        const uploadedFilePath = responseData.Path;
+        
+        if (getMultipleFlag.value) {
+            // 多文件模式：查找并更新占位文件的State（与旧版本一致）
+            let filesJson = props.FormDiyTableModel[props.field.Name];
+            if (!Array.isArray(filesJson)) filesJson = [];
+            
+            console.log('【多文件】当前文件列表:', JSON.parse(JSON.stringify(filesJson)));
+            console.log('【多文件】查找file.uid:', file.uid);
+            console.log('【多文件】uploadedFileId:', uploadedFileId);
+            
+            // 查找并更新现有文件
+            let isHave = false;
+            filesJson.forEach((element) => {
+                if (element.Id == file.uid) {
+                    console.log('【多文件】✓ 找到匹配文件，更新State为1');
+                    element.Id = uploadedFileId;
+                    element.Size = responseData.Size;
+                    element.CreateTime = responseData.CreateTime;
+                    element.Path = uploadedFilePath;
+                    element.State = 1;
+                    element.Name = responseData.Name || file.name;
+                    isHave = true;
+                }
+            });
+            
+            // 如果没找到，则添加新文件
+            if (!isHave) {
+                console.log('【多文件】× 未找到匹配文件，添加新文件');
+                const pushed = responseData || {};
+                if (!pushed.Id) pushed.Id = file.uid;
+                pushed.State = 1;
+                filesJson.push(pushed);
+            }
+            
+            // 更新FormDiyTableModel和emit
+            props.FormDiyTableModel[props.field.Name] = filesJson;
+            emit('update:modelValue', filesJson);
+            console.log('【多文件】更新后的文件列表:', JSON.parse(JSON.stringify(filesJson)));
+
+            // 立即设置RealPath
+            console.log('【多文件】准备设置RealPath，fileId:', uploadedFileId, 'path:', uploadedFilePath);
+            setRealPath(uploadedFileId, uploadedFilePath, props.field.Config.FileUpload.Limit);
+        } else {
+            // 单文件模式 - 存储为JSON字符串
+            console.log('【单文件】上传成功，Path:', uploadedFilePath);
+            const singleFileObject = {
+                Id: uploadedFileId,
+                Name: responseData.Name || file.name,
+                Size: responseData.Size,
+                CreateTime: responseData.CreateTime,
+                Path: uploadedFilePath,
+                State: 1
+            };
+            // 存储为JSON字符串
+            const jsonString = JSON.stringify(singleFileObject);
+            props.FormDiyTableModel[props.field.Name] = jsonString;
+            emit('update:modelValue', jsonString);
+            console.log('【单文件】存储的JSON字符串:', jsonString);
+            console.log('【单文件】验证存储类型:', typeof props.FormDiyTableModel[props.field.Name]);
+            console.log('【单文件】验证字符串是否正确:', props.FormDiyTableModel[props.field.Name].charAt ? '是字符串' : '不是字符串');
+            
+            // 使用nextTick确保modelValue更新后再设置RealPath
+            nextTick(() => {
+                console.log('【单文件】nextTick - modelValue已更新:', props.modelValue);
+                console.log('【单文件】准备设置RealPath，fileId:', props.field.Name, 'path:', uploadedFilePath);
+                setRealPath(props.field.Name, uploadedFilePath, props.field.Config.FileUpload.Limit);
+            });
+        }
+
+        // 上传成功后V8事件
+        if (props.field.Config?.Upload?.UploadSuccessV8) {
+            emit('CallbackRunV8Code', {
+                field: props.field,
+                _v8Code: props.field.Config.Upload.UploadSuccessV8
+            });
+        }
+        // 触发标准V8Code（兼容旧版行为）
+        emit('CallbackRunV8Code', { field: props.field });
+        
+        console.log('=== FileUploadSuccess END ===');
+    } else {
+        console.error('【上传失败】接口返回失败:', result);
+    }
+};
+
+// 设置RealPath
+const setRealPath = (fileId, filePath, isLimit) => {
+    const pathKey = props.field.Name + '_' + fileId + '_RealPath';
+    console.log('=== setRealPath START ===');
+    console.log('参数 fileId:', fileId);
+    console.log('参数 filePath:', filePath);
+    console.log('参数 isLimit:', isLimit);
+    console.log('计算出的 pathKey:', pathKey);
+    console.log('FormDiyTableModel当前值:', props.FormDiyTableModel[pathKey]);
+    
+    if (isLimit === true) {
+        // 私有文件，需要获取临时URL
+        props.FormDiyTableModel[pathKey] = './static/img/loading.gif';
+        console.log('【私有文件】设置loading状态');
+        
+        DiyCommon.Post(
+            '/api/HDFS/GetPrivateFileUrl',
+            {
+                FilePathName: filePath,
+                HDFS: SysConfig.value.HDFS || 'Aliyun',
+                FormEngineKey: props.DiyTableModel.Name || props.field.TableId,
+                FormDataId: props.TableRowId,
+                FieldId: props.field.Id
+            },
+            (privateResult) => {
+                if (DiyCommon.Result(privateResult)) {
+                    props.FormDiyTableModel[pathKey] = privateResult.Data;
+                    console.log('【私有文件】URL获取成功:', privateResult.Data);
+                    console.log('【私有文件】pathKey:', pathKey, '最终值:', props.FormDiyTableModel[pathKey]);
+                } else {
+                    props.FormDiyTableModel[pathKey] = './static/img/img-load-fail.jpg';
+                    console.error('【私有文件】URL获取失败');
+                }
+            },
+            () => {
+                props.FormDiyTableModel[pathKey] = './static/img/img-load-fail.jpg';
+                console.error('【私有文件】URL请求异常');
+            }
+        );
+    } else {
+        // 公开文件，直接拼接路径
+        const serverPath = DiyCommon.GetServerPath(filePath);
+        props.FormDiyTableModel[pathKey] = serverPath;
+        console.log('【公开文件】路径设置完成');
+        console.log('【公开文件】pathKey:', pathKey);
+        console.log('【公开文件】serverPath:', serverPath);
+        console.log('【公开文件】验证设置成功:', props.FormDiyTableModel[pathKey]);
+    }
+    
+    console.log('=== setRealPath END ===');
+};
+
+// 确认删除上传的文件
+const ConfirmDelUploadFiles = (file) => {
+    ElMessageBox.confirm(
+        `确定要删除文件 "${file.Name}" 吗？`,
+        '删除确认',
+        {
+            confirmButtonText: '确定',
+            cancelButtonText: '取消',
+            type: 'warning'
+        }
+    ).then(() => {
+        DelUploadFiles(file);
+    }).catch(() => {});
+};
+
+// 删除上传的文件
+const DelUploadFiles = (file) => {
+    const files = props.FormDiyTableModel[props.field.Name].filter(f => f.Id !== file.Id);
+    props.FormDiyTableModel[props.field.Name] = files;
+    emit('update:modelValue', files);
+};
+
+// 确认删除单文件
+const ConfirmDelSingleUpload = () => {
+    const fileName = GetFileName(props.modelValue);
+    ElMessageBox.confirm(
+        `确定要删除文件 "${fileName}" 吗？`,
+        '删除确认',
+        {
+            confirmButtonText: '确定',
+            cancelButtonText: '取消',
+            type: 'warning'
+        }
+    ).then(() => {
+        DelSingleUpload();
+    }).catch(() => {});
+};
+
+// 删除单文件上传
+const DelSingleUpload = () => {
+    delete props.FormDiyTableModel[props.field.Name];
+    delete props.FormDiyTableModel[props.field.Name + '_' + props.field.Name + '_RealPath'];
+    
+    props.FormDiyTableModel[props.field.Name] = '';
+    props.FormDiyTableModel[props.field.Name + '_' + props.field.Name + '_RealPath'] = '';
+    
+    if (uploadRef.value) {
+        uploadRef.value.clearFiles();
+    }
+    
+    // 清空单文件文件名
+    singleFileName.value = '';
+    
+    emit('update:modelValue', '');
+};
+
+// 更新单文件文件名
+const updateSingleFileName = () => {
+    const normalized = normalizeValue(props.modelValue);
+    if (typeof normalized === 'object' && normalized !== null) {
+        // 更新对象中的Name字段
+        normalized.Name = singleFileName.value;
+        // 重新序列化为JSON字符串
+        const jsonString = JSON.stringify(normalized);
+        props.FormDiyTableModel[props.field.Name] = jsonString;
+        emit('update:modelValue', jsonString);
+    }
+};
+
+// 获取文件列表
+const GetFileUpladFils = () => {
+    var files = props.FormDiyTableModel[props.field.Name];
+    if (!Array.isArray(files)) {
+        return [];
+    }
+    return files;
+};
+
+// 获取文件列表（Element UI格式）
+const GetFileList = (field) => {
+    try {
+        var fieldValue = props.FormDiyTableModel[field.Name];
+        
+        if (DiyCommon.IsNull(fieldValue) || fieldValue === '正在上传中...') {
+            return [];
+        }
+        
+        if (field.Config.FileUpload.Multiple != true) {
+            var fileName;
+            var fileUrl;
+            
+            // 如果是对象（单文件JSON格式），从对象中读取
+            if (typeof fieldValue === 'object' && fieldValue !== null) {
+                fileName = fieldValue.Name || '';
+                fileUrl = fieldValue.Path || '';
+            } else {
+                // 兼容老数据（字符串格式）
+                fileName = GetFileName(fieldValue);
+                fileUrl = fieldValue;
+            }
+            
+            if (field.Config.FileUpload.Limit == false) {
+                return [{
+                    name: fileName,
+                    url: DiyCommon.GetFileServer() + fileUrl
+                }];
+            }
+            return [{
+                name: fileName,
+                url: fileUrl
+            }];
+        }
+        
+        if (Array.isArray(fieldValue)) {
+            return JsonToFileList(fieldValue);
+        }
+        
+        return [];
+    } catch (error) {
+        console.error('GetFileList error:', error);
+        return [];
+    }
+};
+
+// 转换为文件列表
+const JsonToFileList = (arr) => {
+    return arr.map(element => ({
+        name: element.Name,
+        url: element.Path,
+        Id: element.Id
+    }));
+};
+
+// 打开URL
+const GoUrl = (url, fileMeta = null) => {
+    console.log('GoUrl called with:', url);
+    if (DiyCommon.IsNull(url) || url === './static/img/loading.gif' || url === './static/img/img-load-fail.jpg') {
+        console.warn('Invalid URL:', url);
+        DiyCommon.Tips('文件路径未就绪，请稍后再试', false);
+        return;
+    }
+
+    // 图片文件使用内置图片预览器，避免在APP端 window.open 体验差
+    if (isImageFile(url)) {
+        imagePreviewList.value = [url];
+        imagePreviewVisible.value = true;
+        return;
+    }
+    if (
+        SysConfig.value &&
+        (SysConfig.value.Is_online_office || SysConfig.value.OnlyOfficeApiBase) &&
+        (url.indexOf('.doc') != -1 ||
+            url.indexOf('.docx') != -1 ||
+            url.indexOf('.xls') != -1 ||
+            url.indexOf('.xlsx') != -1 ||
+            url.indexOf('.ppt') != -1 ||
+            url.indexOf('.pptx') != -1)
+    ) {
+        emit('CallbackGoUrl', buildOnlineOfficePayload(url, fileMeta));
+    } else {
+        window.open(url, '_blank', 'noopener,noreferrer');
+    }
+};
+
+const buildOnlineOfficePayload = (url, fileMeta = null) => {
+    const meta = fileMeta || {};
+    const sourceFilePath = meta.Path || meta.path || getFileStoragePath(meta);
+    const isPrivateFile = props.field.Config?.FileUpload?.Limit === true;
+    return {
+        url,
+        filePath: url,
+        filePathName: sourceFilePath,
+        isPrivate: isPrivateFile,
+        hdfs: SysConfig.value.HDFS || 'Aliyun',
+        formEngineKey: props.DiyTableModel.Name || props.field.TableId || '',
+        formDataId: props.TableRowId || '',
+        fieldId: props.field.Id || '',
+        fileName: meta.Name || meta.name || GetFileName(props.modelValue) || GetFileName(url),
+        fileSize: meta.Size || meta.size || getSingleFileRawSize()
+    };
+};
+
+// 获取文件名
+const GetFileName = (path) => {
+    // 先规范化数据
+    const normalized = normalizeValue(path);
+    
+    if (DiyCommon.IsNull(normalized)) {
+        return '';
+    }
+    // 如果是对象（单文件JSON格式），直接返回Name
+    if (typeof normalized === 'object' && normalized !== null) {
+        return normalized.Name || '';
+    }
+    // 如果是字符串路径，从路径中提取文件名
+    var arr = normalized.split('/');
+    return arr[arr.length - 1];
+};
+
+// 格式化文件大小
+const formatFileSize = (bytes) => {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    if (bytes < k) return bytes + ' B';
+    if (bytes < k * k) return (bytes / k).toFixed(2) + ' KB';
+    if (bytes < k * k * k) return (bytes / (k * k)).toFixed(2) + ' MB';
+    return (bytes / (k * k * k)).toFixed(2) + ' GB';
+};
+
+// 获取单文件的大小
+const getSingleFileSize = () => {
+    return formatFileSize(getSingleFileRawSize());
+};
+
+const getSingleFileRawSize = () => {
+    // 先规范化数据
+    const normalized = normalizeValue(props.modelValue);
+    
+    // 如果是对象（单文件JSON格式），从对象中读取Size
+    if (typeof normalized === 'object' && normalized !== null && normalized.Size) {
+        return normalized.Size;
+    }
+    // 兼容老数据（字符串格式）- 尝试从旧的FileSize字段读取
+    const sizeKey = props.field.Name + '_FileSize';
+    return props.FormDiyTableModel[sizeKey];
+};
+
+const getSingleFileMeta = () => {
+    const normalized = normalizeValue(props.modelValue);
+    if (typeof normalized === 'object' && normalized !== null) {
+        return normalized;
+    }
+    return {
+        Name: GetFileName(props.modelValue),
+        Path: getFileStoragePath(),
+        Size: getSingleFileRawSize()
+    };
+};
+
+// 获取上传后的下载地址（用于View模式）
+const GetUploadPath = (field, file) => {
+    // 获取文件路径：如果是单文件对象，从Path字段获取；否则使用原值或file.Path
+    var filePathName;
+    if (DiyCommon.IsNull(file)) {
+        var fieldValue = props.FormDiyTableModel[field.Name];
+        // 先规范化数据
+        const normalized = normalizeValue(fieldValue);
+        // 如果是对象（单文件JSON格式），取Path字段
+        if (typeof normalized === 'object' && normalized !== null && normalized.Path) {
+            filePathName = normalized.Path;
+        } else {
+            filePathName = normalized;
+        }
+    } else {
+        filePathName = file.Path;
+    }
+    
+    if (DiyCommon.IsNull(filePathName) || Array.isArray(filePathName)) {
+        return;
+    }
+    
+    if (filePathName === '[]' || filePathName === '[ ]' || filePathName === 'null' || filePathName === 'undefined') {
+        return;
+    }
+
+    var limit = field.Config[field.Component].Limit;
+    var fileId = field.Name;
+
+    if (limit !== true) {
+        var serverPath = DiyCommon.GetServerPath(filePathName);
+        props.FormDiyTableModel[field.Name + '_' + fileId + '_RealPath'] = serverPath;
+    } else {
+        var nowPath = props.FormDiyTableModel[field.Name + '_' + fileId + '_RealPath'];
+        
+        if (DiyCommon.IsNull(nowPath) || nowPath == './static/img/loading.gif') {
+            props.FormDiyTableModel[field.Name + '_' + fileId + '_RealPath'] = './static/img/loading.gif';
+            if (filePathName != './static/img/loading.gif' && filePathName != '正在上传中...') {
+                DiyCommon.Post(
+                    '/api/HDFS/GetPrivateFileUrl',
+                    {
+                        FilePathName: filePathName,
+                        HDFS: SysConfig.value.HDFS || 'Aliyun',
+                        FormEngineKey: props.DiyTableModel.Name || props.field.TableId,
+                        FormDataId: props.TableRowId,
+                        FieldId: field.Id
+                    },
+                    (result) => {
+                        if (DiyCommon.Result(result)) {
+                            props.FormDiyTableModel[field.Name + '_' + fileId + '_RealPath'] = result.Data;
+                        } else {
+                            props.FormDiyTableModel[field.Name + '_' + fileId + '_RealPath'] = './static/img/img-load-fail.jpg';
+                        }
+                    },
+                    () => {
+                        props.FormDiyTableModel[field.Name + '_' + fileId + '_RealPath'] = './static/img/img-load-fail.jpg';
+                    }
+                );
+            }
+        }
+    }
+};
+
+// 监听modelValue变化
+watch(
+    () => props.modelValue,
+    (newVal) => {
+        // 移除 FormMode == 'View' 的限制，让编辑模式和查看模式都能正确显示文件
+        if (!DiyCommon.IsNull(newVal) && !getMultipleFlag.value) {
+            GetUploadPath(props.field, null);
+            // 同时初始化单文件文件名
+            const normalized = normalizeValue(newVal);
+            if (typeof normalized === 'object' && normalized !== null) {
+                singleFileName.value = normalized.Name || '';
+            } else {
+                singleFileName.value = GetFileName(newVal);
+            }
+        }
+    },
+    { immediate: true }
+);
+
+// 监听文件列表变化，重新初始化sortable
+watch(
+    () => showMultipleFileList.value,
+    async (newVal) => {
+        if (newVal) {
+            await nextTick();
+            initSortable();
+            // 为多文件初始化 RealPath（编辑模式和查看模式都需要）
+            if (Array.isArray(props.modelValue)) {
+                props.modelValue.forEach((file) => {
+                    if (file && file.Id && file.Path) {
+                        const pathKey = props.field.Name + '_' + file.Id + '_RealPath';
+                        // 只在 RealPath 未设置或为 loading.gif 时才设置
+                        if (DiyCommon.IsNull(props.FormDiyTableModel[pathKey]) || 
+                            props.FormDiyTableModel[pathKey] === './static/img/loading.gif') {
+                            setRealPath(file.Id, file.Path, props.field.Config.FileUpload.Limit);
+                        }
+                    }
+                });
+            }
+        }
+    }
+);
+
+// 组件挂载后初始化
+onMounted(() => {
+    // 初始化多文件的拖拽排序
+    if (showMultipleFileList.value) {
+        nextTick(() => {
+            initSortable();
+        });
+    }
+    
+    // 为已有的多文件初始化 RealPath（编辑模式和查看模式都需要）
+    if (getMultipleFlag.value && Array.isArray(props.modelValue) && props.modelValue.length > 0) {
+        props.modelValue.forEach((file) => {
+            if (file && file.Id && file.Path) {
+                const pathKey = props.field.Name + '_' + file.Id + '_RealPath';
+                // 只在 RealPath 未设置或为 loading.gif 时才设置
+                if (DiyCommon.IsNull(props.FormDiyTableModel[pathKey]) || 
+                    props.FormDiyTableModel[pathKey] === './static/img/loading.gif') {
+                    setRealPath(file.Id, file.Path, props.field.Config.FileUpload.Limit);
+                }
+            }
+        });
+    }
+});
+
+// 组件卸载前清理
+onBeforeUnmount(() => {
+    if (sortableInstance) {
+        sortableInstance.destroy();
+    }
+    uploadRef.value = null;
+});
+</script>
+
+<style lang="scss" scoped>
+.diy-fileupload {
+    width: 100%;
+
+    .single-file-display {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0px;
+        margin-top: 5px;
+        background: #f5f7fa;
+        border: 1px solid #e4e7ed;
+        border-radius: 4px;
+        transition: all 0.2s;
+
+        &:hover {
+            background: #ecf5ff;
+            border-color: #409eff;
+        }
+
+        &.view-mode {
+            background: #fafafa;
+            
+            &:hover {
+                background: #f0f0f0;
+            }
+        }
+
+        .file-info {
+            display: flex;
+            align-items: center;
+            flex: 1;
+            gap: 8px;
+            min-width: 0;
+
+            .file-icon {
+                font-size: 20px;
+                color: #409eff;
+                flex-shrink: 0;
+            }
+
+            .file-detail {
+                flex: 1;
+                min-width: 0;
+                display: flex;
+                flex-direction: row;
+                align-items: center;
+                gap: 8px;
+
+                .file-name-input {
+                    flex: 1;
+                    :deep(.el-input__wrapper) {
+                        padding: 2px 8px;
+                    }
+                    :deep(.el-input__inner) {
+                        font-size: 13px;
+                    }
+                }
+
+                .file-name {
+                    color: #409eff;
+                    cursor: pointer;
+                    font-size: 13px;
+                    transition: color 0.2s;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                    flex: 1;
+
+                    &:hover {
+                        color: #66b1ff;
+                        text-decoration: underline;
+                    }
+                }
+
+                .file-size {
+                    color: #909399;
+                    font-size: 12px;
+                    flex-shrink: 0;
+                }
+            }
+        }
+    }
+
+    .multiple-files-list {
+        margin-top: 0px;
+        border: 1px solid #e4e7ed;
+        border-radius: 4px;
+        overflow: hidden;
+
+        .file-item {
+            border-bottom: 1px solid #e4e7ed;
+            transition: background 0.2s;
+
+            &:last-child {
+                border-bottom: none;
+            }
+
+            &:hover {
+                background: #f5f7fa;
+            }
+
+            .file-item-content {
+                display: flex;
+                align-items: center;
+                padding: 0px;
+                gap: 8px;
+                padding-left: 10px;
+
+                .drag-handle {
+                    font-size: 16px;
+                    color: #909399;
+                    cursor: move;
+                    flex-shrink: 0;
+                    
+                    &:hover {
+                        color: #409eff;
+                    }
+                }
+
+                .file-icon {
+                    font-size: 20px;
+                    color: #606266;
+                    flex-shrink: 0;
+                }
+
+                .file-details {
+                    flex: 1;
+                    min-width: 0;
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+
+                    .file-name-wrapper {
+                        flex: 1;
+                        min-width: 0;
+
+                        .file-name-input {
+                            :deep(.el-input__wrapper) {
+                                padding: 2px 8px;
+                            }
+                        }
+                    }
+
+                    .file-name {
+                        color: #409eff;
+                        cursor: pointer;
+                        font-size: 13px;
+                        flex: 1;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                        transition: color 0.2s;
+
+                        &:hover {
+                            color: #66b1ff;
+                            text-decoration: underline;
+                        }
+                    }
+
+                    .file-size {
+                        color: #909399;
+                        font-size: 12px;
+                        flex-shrink: 0;
+                    }
+
+                    .el-tag {
+                        flex-shrink: 0;
+                    }
+                }
+            }
+        }
+    }
+}
+
+.form-item-tip {
+    font-size: 12px;
+    color: #909399;
+    line-height: 1.5;
+    margin-top: 4px;
+}
+</style>
+
+<style lang="scss">
+/* 文件上传组件的图片预览器样式 */
+.el-image-viewer__wrapper {
+    z-index: 9999 !important;
+}
+/* 移动端隐藏图片预览器的缩放旋转按钮，保留关闭按钮 */
+@media (max-width: 768px) {
+    .el-image-viewer__actions {
+        display: none !important;
+    }
+}
+</style>

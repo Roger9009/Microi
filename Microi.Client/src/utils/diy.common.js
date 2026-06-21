@@ -1,0 +1,4731 @@
+// Pinia store 适配层
+import pinia from "@/pinia";
+import { useDiyStore, useAppStore } from "@/pinia";
+import { Base64 } from "js-base64";
+// import Cookies from 'js-cookie'
+//import { DiyStore } from '../store/diy.store'//2021-04-20注释
+// import Router from 'vue-router'
+import qs from "qs";
+import axios from "axios";
+import { DosCommon } from "./dos.common.js";
+import i18n, { setI18nLocale, normalizeLocale } from "@/lang";
+import { ElNotification, ElMessageBox, ElMessage, ElLoading } from "element-plus";
+import { getToken, getTokenExpires, removeToken, setToken, setTokenExpires } from "@/utils/auth.js";
+import { DiyApi } from "./api.itdos";
+import packageInfo from "../../package.json";
+import $ from "jquery";
+import _ from "underscore";
+import LocalStorageManager from "./localStorage-manager.js";
+import { initV8ScanCode } from "./v8-scan-code.js";
+import { initV8Print } from "./v8-print.js";
+// import { for } from 'core-js/fn/symbol'
+// import QRCode from "qrcodejs2";
+import config from "@/config.json";
+
+
+// Vue 3 i18n 兼容辅助函数
+const getI18nMsg = (key, fallback = "") => {
+    try {
+        const locale = i18n.global.locale;
+        return i18n.global.messages[locale]?.Msg?.[key] || fallback || key;
+    } catch (e) {
+        return fallback || key;
+    }
+};
+
+// 辅助函数：获取 DiyStore
+const getDiyStore = () => useDiyStore(pinia);
+
+// Vuex 兼容层 - 用于逐步迁移
+const store = {
+    state: {
+        get DiyStore() {
+            return getDiyStore().$state;
+        }
+    },
+    getters: {
+        "DiyStore/GetCurrentUser": () => getDiyStore().GetCurrentUser
+    },
+    commit: (mutation, payload) => {
+        const diyStore = getDiyStore();
+        const [module, mutationName] = mutation.split("/");
+        if (module === "DiyStore") {
+            switch (mutationName) {
+                case "SetState":
+                    diyStore.setState(payload.key, payload.value);
+                    break;
+                case "SetCurrentUser":
+                    diyStore.setCurrentUser(payload);
+                    break;
+                case "SetSysConfig":
+                    diyStore.setSysConfig(payload);
+                    break;
+                case "SetCurrentTime":
+                    diyStore.setCurrentTime(payload.Data || payload);
+                    break;
+                default:
+                    console.warn(`Unknown mutation: ${mutation}`);
+            }
+        }
+    },
+    dispatch: (action, payload) => {
+        const diyStore = getDiyStore();
+        const [module, actionName] = action.split("/");
+        if (module === "DiyStore") {
+            switch (actionName) {
+                case "SetLang":
+                    diyStore.setLang(payload);
+                    break;
+                case "SetDesktopBg":
+                    diyStore.setDesktopBg(payload);
+                    break;
+                default:
+                    console.warn(`Unknown action: ${action}`);
+            }
+        }
+    }
+};
+
+// Vue.prototype.$notify = Notification;
+const pathBase = "./";
+const isClientApp = false;
+var DiyCommon = {
+    MicroiNetVersion: "v1.9.7.2",
+    PageSizes: [10, 15, 20, 30, 40, 50, 100], //, 200, 300, 500, 1000
+    TokenKey: "Microi.Token",
+    TokenExpiresKey: "Microi.Token.Expires",
+    // 401 重登录節流标志：避免并发请求 Token 同时失效时弹出 N 个登录框
+    _LoginPending: false,
+    /**
+     * 安全解析 JSON，避免裸 JSON.parse 抛错导致页面崩溃
+     * @param {*} str 待解析内容
+     * @param {*} fallback 解析失败时返回值，默认 null
+     */
+    SafeJsonParse: function (str, fallback) {
+        if (fallback === undefined) fallback = null;
+        if (str === null || str === undefined) return fallback;
+        if (typeof str !== "string") return str;
+        try {
+            return JSON.parse(str);
+        } catch (e) {
+            console.warn("[DiyCommon.SafeJsonParse] 解析失败：", e && e.message);
+            return fallback;
+        }
+    },
+    OsClient: "",
+    DefaultFieldNames: ["Id", "CreateTime", "UpdateTime", "UserId", "UserName", "IsDeleted"], //"ParentId",
+    SysDefaultField: [
+        {
+            Id: "CreateTime",
+            Label: "创建时间",
+            Name: "CreateTime",
+            Type: "varchar(50)",
+            Component: "DateTime",
+            Config: { DateTimeType: "datetime" },
+            TableName: "",
+            TableId: ""
+        },
+        {
+            Id: "UserName",
+            Label: "创建人",
+            Name: "UserName",
+            Type: "varchar(50)",
+            Component: "Text",
+            TableName: "",
+            TableId: ""
+        },
+        {
+            Id: "UserId",
+            Label: "创建人Id",
+            Name: "UserId",
+            Type: "varchar(50)",
+            Component: "Text",
+            TableName: "",
+            TableId: ""
+        },
+        {
+            Id: "UpdateTime",
+            Label: "修改时间",
+            Name: "UpdateTime",
+            Type: "varchar(50)",
+            Component: "DateTime",
+            Config: { DateTimeType: "datetime" },
+            TableName: "",
+            TableId: ""
+        }
+    ],
+    RemoveHtml: function (html) {
+        if (DiyCommon.IsNull(html)) {
+            return "";
+        }
+        var regx = /<[^>]*>|<\/[^>]*>/gm;
+        var result = html.replace(regx, "");
+        return result;
+    },
+    testUserModel: {
+        Code: 1,
+        Data: {
+            _Child: null,
+            ParentId: "00000000-0000-0000-0000-000000000000",
+            GroupName: null,
+            _IsAdmin: false,
+            _Roles: [
+                {
+                    ParentId: "00000000-0000-0000-0000-000000000000",
+                    _Child: null,
+                    SysMenuIds: null,
+                    Id: "a1433fb6-6752-49d4-a8c9-f7de0ae03d94",
+                    Name: "demo",
+                    CreateTime: "2019/07/30 15:14:09",
+                    UpdateTime: "2019/08/01 10:23:43",
+                    Sort: null,
+                    Class: "",
+                    BaseLimit: '["查询"]'
+                }
+            ],
+            Authorization: null,
+            Id: "315b60bb-878a-4f89-b6fe-b0dee81a316c",
+            No: "Hr2019#0001",
+            Account: "demo",
+            Pwd: "",
+            Name: "",
+            RealName: "demo",
+            Phone: "",
+            CreateTime: "2019/07/29 15:30:07",
+            State: 1,
+            Remark: "",
+            Avatar: "",
+            InitCalendar: false,
+            Sex: null,
+            IsDelete: false
+        },
+        Msg: null
+    },
+    showGotoWebOS: false,
+    isClientApp: false,
+    GetPageBodyClientWH() {
+        var result = {
+            Width: document.body.clientWidth,
+            Height: document.body.clientHeight
+        };
+        return result;
+    },
+    GetFileServer: function () {
+        try {
+            if (FileServer) {
+                return FileServer.TrimEnd('/');
+            }
+        } catch (error) {}
+        var result = store.state.DiyStore.FileServer;
+        if (!DiyCommon.IsNull(result)) {
+            return result.TrimEnd('/');
+        }
+        return "https://static.itdos.com";
+    },
+    GetMediaServer: function () {
+        var result = store.state.DiyStore.MediaServer;
+        if (!DiyCommon.IsNull(result)) {
+            return result.TrimEnd('/');
+        }
+        var osClient = DiyCommon.GetOsClient();
+        return "https://static.itdos.com";
+    },
+    //如果是"."开头，会直接返回
+    GetServerPath: function (url, returnNoImg) {
+        var self = this;
+        if (!url) {
+            if (returnNoImg === false) {
+                return "";
+            }
+            return "./static/img/nohead-girl.png";
+        }
+        var urlPah = '';
+        if (typeof(url) == 'object') {
+            urlPah = url.Path;
+        }else{
+            urlPah = url.toString();
+        }
+        if (urlPah.startsWith(".")) {
+            return urlPah;
+        }
+        //如果是json
+        if (urlPah.startsWith('{')) {
+            try {
+                var urlObj = JSON.parse(urlPah);
+                if (urlObj && urlObj.Path) {
+                    urlPah = urlObj.Path;
+                }
+            } catch (e) {
+                // 解析失败，继续使用原始字符串
+            }
+        }
+        if (urlPah.startsWith('http')) {
+            return urlPah;
+        }
+        
+        if (urlPah.startsWith('{')) {
+            var urlObj = JSON.parse(urlPah);
+            return DiyCommon.GetFileServer().TrimEnd('/') + urlObj.Path;
+        }
+        if (urlPah.startsWith('[')) {
+            var urlArr = JSON.parse(urlPah);
+            if (urlArr.length > 0) {
+                return DiyCommon.GetFileServer().TrimEnd('/') + urlArr[0].Path;
+            }
+        }
+        return DiyCommon.GetFileServer().TrimEnd('/') + urlPah;
+    },
+    pathBase: "./",
+    RepalceUrlKey(url) {
+        if (!url) {
+            return url;
+        }
+        return url.replace("$ApiBase$", DiyCommon.GetApiBase()).replace("$OsClient$", DiyCommon.GetOsClient());
+    },
+    SetApiBase(apiBase) {
+        localStorage.setItem("Microi.ApiBase", apiBase);
+        store.commit("DiyStore/SetState", {
+            key: "ApiBase",
+            value: apiBase
+        });
+    },
+    GetApiBase: function () {
+        
+
+        //如果index.html指定了ApiBase，这个权力最大
+        if (!DiyCommon.IsNull(ApiBase)) {
+            return ApiBase;
+        }
+        // 读取 config.json 中的配置（修改 JSON 文件后，Vite HMR 会自动更新）
+        if (config && config.ApiBaseDev) {
+            return config.ApiBaseDev.replace(/\/+$/, "");
+        }
+        var result = store.state.DiyStore.ApiBase;
+        if (!DiyCommon.IsNull(result)) {
+            return result;
+        }
+        var cachedApiBase = LocalStorageManager.get("ApiBase");
+        if (!DiyCommon.IsNull(cachedApiBase)) {
+            return cachedApiBase;
+        }
+        return "https://api-china.itdos.com";
+    },
+    IsNull: function (str) {
+        // try {
+        if (str == null || str == undefined || str === "" || str === "undefined" || str === "null") {
+            return true;
+        }
+        return false;
+        // } catch (error) {
+        //     return true
+        // }
+    },
+    GetFileSize($bytesize) {
+        let $i = 0;
+        // 当$bytesize 大于是1024字节时，开始循环，当循环到第4次时跳出；
+        while (Math.abs($bytesize) >= 1024) {
+            $bytesize = $bytesize / 1024;
+            $i++;
+            if ($i === 4) break;
+        }
+        // 将Bytes,KB,MB,GB,TB定义成一维数组；
+        const $units = ["B", "KB", "MB", "GB", "TB"];
+        const $newsize = Math.round($bytesize, 2);
+        return $newsize + " " + $units[$i];
+    },
+    DateTimeFormat: function (time, format) {
+        if (DiyCommon.IsNull(format)) {
+            return time;
+        }
+        var o = {
+            "M+": time.getMonth() + 1, // month
+            "d+": time.getDate(), // day
+            "h+": time.getHours(), // hour
+            "H+": time.getHours(), // hour
+            "m+": time.getMinutes(), // minute
+            "s+": time.getSeconds(), // second
+            "q+": Math.floor((time.getMonth() + 3) / 3), // quarter
+            S: time.getMilliseconds() // millisecond
+        };
+        if (/(y+)/.test(format)) {
+            format = format.replace(RegExp.$1, (time.getFullYear() + "").substr(4 - RegExp.$1.length));
+        }
+        for (var k in o) {
+            if (new RegExp("(" + k + ")").test(format)) {
+                format = format.replace(RegExp.$1, RegExp.$1.length == 1 ? o[k] : ("00" + o[k]).substr(("" + o[k]).length));
+            }
+        }
+        return format;
+    },
+    // apiBase : apiBase,
+    // vue-i18n v9: 使用 i18n.global 访问
+    Months: [
+        i18n.global.messages[i18n.global.locale]?.Msg?.Jan || "Jan",
+        i18n.global.messages[i18n.global.locale]?.Msg?.Feb || "Feb",
+        i18n.global.messages[i18n.global.locale]?.Msg?.Mar || "Mar",
+        i18n.global.messages[i18n.global.locale]?.Msg?.Apr || "Apr",
+        i18n.global.messages[i18n.global.locale]?.Msg?.May || "May",
+        i18n.global.messages[i18n.global.locale]?.Msg?.Jun || "Jun",
+        i18n.global.messages[i18n.global.locale]?.Msg?.Jul || "Jul",
+        i18n.global.messages[i18n.global.locale]?.Msg?.Aug || "Aug",
+        i18n.global.messages[i18n.global.locale]?.Msg?.Sept || "Sept",
+        i18n.global.messages[i18n.global.locale]?.Msg?.Oct || "Oct",
+        i18n.global.messages[i18n.global.locale]?.Msg?.Nov || "Nov",
+        i18n.global.messages[i18n.global.locale]?.Msg?.Dec || "Dec"
+    ],
+    Weeks: [
+        i18n.global.messages[i18n.global.locale]?.Msg?.Sun || "Sun",
+        i18n.global.messages[i18n.global.locale]?.Msg?.Mon || "Mon",
+        i18n.global.messages[i18n.global.locale]?.Msg?.Tues || "Tues",
+        i18n.global.messages[i18n.global.locale]?.Msg?.Wed || "Wed",
+        i18n.global.messages[i18n.global.locale]?.Msg?.Thurs || "Thurs",
+        i18n.global.messages[i18n.global.locale]?.Msg?.Fri || "Fri",
+        i18n.global.messages[i18n.global.locale]?.Msg?.Sat || "Sat"
+    ],
+    FirstOpenLogin: true,
+    videoLoginObj: null,
+    videoDesktopObj: null,
+    IsFullScreen: false,
+    Did: "",
+    Authorization: function () {
+        return DiyCommon.getToken();
+    },
+    zTreeSet: {
+        edit: {
+            enable: true,
+            showRemoveBtn: true,
+            showRenameBtn: true
+        },
+        data: {
+            key: {
+                id: "Id",
+                children: "_Child",
+                name: "Name",
+                parentId: "ParentId"
+            }
+        },
+        // viewAddHoverDom:function(){},
+        view: {
+            dblClickExpand: true,
+            showLine: true,
+            selectedMulti: false,
+            removeHoverDom: function (treeId, treeNode) {
+                $("#addBtn_" + treeNode.tId)
+                    .unbind()
+                    .remove();
+            }
+            // addHoverDom:function(treeId, treeNode) {
+            // },
+        },
+        callback: {
+            // beforeDrop: function(treeId, treeNodes, targetNode, moveType) {
+            // 	if (targetNode == null) {
+            // 		return false;
+            // 	}
+            // },
+            onDrop: function () {},
+            onRemove: function (e, treeId, treeNode) {},
+            beforeClick: function (treeId, treeNode) {}
+        }
+    },
+    zTreeSetCheck: {
+        check: {
+            enable: true,
+            chkboxType: { Y: "s", N: "s" }
+        },
+        data: {
+            key: {
+                id: "Id",
+                children: "_Child",
+                name: "Name",
+                parentId: "ParentId"
+            }
+        },
+        view: {
+            dblClickExpand: true,
+            showLine: true,
+            selectedMulti: true
+        },
+        callback: {}
+    },
+    dialogSet: {
+        skin: "itdos",
+        storeStatus: false,
+        cloneElementContent: false,
+        borderRadius: "0px",
+        // border:'1px solid #3baced',
+        dragInTopToMax: false,
+        // statusBar: true,
+        buttonKey: false,
+        icon: '<img src="' + pathBase + 'static/image/favicon.ico" style="height:15px;display:block;" />',
+        event: {
+            onfocus: {},
+            onload: {},
+            ondestroy: {},
+            onmin: {},
+            onrestore: {},
+            onmax: {}
+        }
+    },
+    layxSetEventOnmax: {
+        before: function (layxOs, winform) {},
+        after: function (layxOs, winform) {
+            $(layxOs).height("calc(100vh - 40px)");
+        }
+    },
+    layxSetConfirm: {
+        skin: "itdos-confirm",
+        // cloneElementContent: false,
+        // statusBar: true,
+        storeStatus: false,
+        borderRadius: "0px",
+        // border:'1px solid #3baced',
+        dragInTopToMax: false,
+        icon: '<img src="' + pathBase + 'static/image/favicon.ico" style="height:15px;display:block;" />',
+        width: 300,
+        height: 150,
+        dialogIcon: "help"
+    },
+    ModalLoadingHtml:
+        '<div class="itdos-plugin-load-container modal-loading" style="background-color:var(--theme-color);width:100%;height:100%;opacity: 0.9;transition: 0.3s;">' +
+        '<div class="microi-desktop-load">' +
+        '<div class="microi-desktop-loading">' +
+        '<div class="microi-desktop-dot"></div>' +
+        '<div class="microi-desktop-dot"></div>' +
+        '<div class="microi-desktop-dot"></div>' +
+        '<div class="microi-desktop-dot"></div>' +
+        '<div class="microi-desktop-dot"></div>' +
+        "</div>" +
+        "</div>" +
+        "</div>",
+    GuidEmpty: "00000000-0000-0000-0000-000000000000",
+    CompressMaxSize: 210,
+    CompressMaxSize_Min: 70,
+    CompressMaxWidth: 780,
+    CompressMaxWidth_Min: 460,
+    UploadImgMaxSize: 10, // M
+    UploadPdfMaxSize: 100, // M
+    CommonFormWidth: 768,
+    SysMenuNeedConvertField: [
+        "JoinTables",
+        "SelectFields",
+        "TableDiyFieldIds",
+        "NotShowFields",
+        "FixedFields",
+        "MobileListFields",
+        "SearchFieldIds",
+        "SortFieldIds",
+        "StatisticsFields",
+        "MoreBtns",
+        "ExportMoreBtns",
+        "BatchSelectMoreBtns",
+        "PageBtns",
+        "FormBtns",
+        "PageTabs",
+        "InTableEditFields",
+        "TableHeaders",
+        "CardTitleTagFields",
+        "CardBottomTagFields"
+    ],
+    ShowVideo: function () {
+        var self = this;
+        // 背景视频播放，不支持安卓360浏览器、安卓自带浏览器，安卓360浏览器、自带浏览器会让视频直接置顶播放，无法解决。
+        // 不支持安卓微信公众号
+        // 支持苹果微信公众号、支持苹果所有浏览器、支持安卓谷歌浏览器。
+        // 这里的判断会导致安卓在chrome72版本浏览器上也不显示视频，但没办法，因为安卓360浏览器是chrome73版本都没法显示视频，我没法区分安卓360和安卓chrome
+        var isAndroid = /android/i.test(navigator.userAgent);
+        return (
+            !DiyCommon.IsNull(store.state.DiyStore.DesktopBg.LockVideoUrl) &&
+            DiyCommon.IsNull(store.getters["DiyStore/GetCurrentUser"].Id) &&
+            // 如果 是app 或者 不是app但并且不是安卓浏览器，也要显示视频
+            (DiyCommon.isClientApp || (!DiyCommon.isClientApp && !isAndroid))
+        );
+    },
+
+    GetLanDate: function (date) {
+        // var self = this
+        // try {
+        //     console.log('store.state.DiyStore.Lang:', store.state.DiyStore.Lang)
+        // } catch (error) {
+        //     console.log(error.message)
+        // }
+        // return;
+        if (store.state.DiyStore.Lang == "zh-CN") {
+            return date + "日";
+        }
+        if (date <= 3) {
+            if (date == 1) {
+                return date + "st";
+            } else if (date == 2) {
+                return date + "nd";
+            } else if (date == 3) {
+                return date + "rd";
+            } else {
+                return date + "th";
+            }
+        } else {
+            return date + "th";
+        }
+    },
+
+    ShowDesktopVideo: function () {
+        var self = this;
+        var isAndroid = /android/i.test(navigator.userAgent);
+        return (
+            !DiyCommon.IsNull(store.state.DiyStore.DesktopBg.VideoUrl) &&
+            !DiyCommon.IsNull(store.getters["DiyStore/GetCurrentUser"].Id) &&
+            (DiyCommon.isClientApp || (!DiyCommon.isClientApp && !isAndroid))
+        );
+    },
+    // GetLangName(name){
+    // 	var self = this;
+    // 	if (DiyCommon.Lang == 'cn') {
+    // 		return name;
+    // 	}
+    // 	return 'En' + name;
+    // },
+    GetLangValue: function (obj, name) {
+        var self = this;
+        try {
+            if (store.state.DiyStore.Lang == "zh-CN") {
+                return obj[name];
+            }
+            var enName = obj["En" + name];
+            if (DiyCommon.IsNull(enName)) {
+                return obj[name];
+            }
+            return enName;
+        } catch (error) {
+            try {
+                return obj[name];
+            } catch (error) {
+                return "";
+            }
+        }
+    },
+    // 语言切换：统一入口
+    // - 规范化 locale（兼容旧值如 cn / zh / en-US / ja-JP / zh-tw 等）
+    // - 同步 i18n、localStorage、Pinia diyStore.Lang、Pinia appStore.language
+    // - 触发 microi:lang-change 事件供 ElConfigProvider 等响应式组件监听
+    ChangeLang: function (lang, notTips) {
+        try {
+            var n = setI18nLocale ? setI18nLocale(lang) : lang;
+            try { useDiyStore(pinia).setLang(n); } catch {}
+            try { useAppStore(pinia).setLanguage(n); } catch {}
+            DiyCommon.InitLangData();
+            if (notTips !== true) {
+                DiyCommon.Tips(i18n.global.messages[i18n.global.locale]?.Msg?.Success || "Success");
+            }
+        } catch (e) {
+            console.error("[ChangeLang] failed:", e);
+        }
+    },
+    InitLangData: function () {
+        var self = this;
+        const locale = i18n.global.locale;
+        const messages = i18n.global.messages[locale]?.Msg || {};
+        DiyCommon.Weeks = [messages.Sun || "Sun", messages.Mon || "Mon", messages.Tues || "Tues", messages.Wed || "Wed", messages.Thurs || "Thurs", messages.Fri || "Fri", messages.Sat || "Sat"];
+        DiyCommon.Months = [
+            messages.Jan || "Jan",
+            messages.Feb || "Feb",
+            messages.Mar || "Mar",
+            messages.Apr || "Apr",
+            messages.May || "May",
+            messages.Jun || "Jun",
+            messages.Jul || "Jul",
+            messages.Aug || "Aug",
+            messages.Sept || "Sept",
+            messages.Oct || "Oct",
+            messages.Nov || "Nov",
+            messages.Dec || "Dec"
+        ];
+    },
+    SetWebTitle(val) {
+        store.commit("DiyStore/SetState", {
+            key: "WebTitle",
+            value: val
+        });
+        document.title = val;
+    },
+    SetShortTitle(val) {
+        store.commit("DiyStore/SetState", {
+            key: "ShortTitle",
+            value: val
+        });
+    },
+    SetSystemSubTitle(val) {
+        store.commit("DiyStore/SetState", {
+            key: "SystemSubTitle",
+            value: val
+        });
+        document.title = val;
+    },
+    SetClientCompany(company, url) {
+        store.commit("DiyStore/SetState", {
+            key: "ClientCompany",
+            value: company
+        });
+        if (!DiyCommon.IsNull(url)) {
+            store.commit("DiyStore/SetState", {
+                key: "ClientCompanyUrl",
+                value: url
+            });
+        }
+    },
+    SetOsClient(osClient) {
+        localStorage.setItem("Microi.OsClient", osClient);
+        store.commit("DiyStore/SetState", {
+            key: "OsClient",
+            value: osClient
+        });
+    },
+    GetOsClient() {
+        var self = this;
+        if (!DiyCommon.IsNull(OsClient)) {
+            return OsClient;
+        }
+        var result = store.state.DiyStore.OsClient;
+        if (!DiyCommon.IsNull(result)) {
+            return result;
+        }
+        var href = window.location.href.toLowerCase();
+        var reg190317 = new RegExp("(^|&)" + "OsClient" + "=([^&]*)(&|$)");
+        var r190317 = window.location.search.substr(1).match(reg190317);
+        var osClient = r190317 != null ? r190317[2] : "";
+        var cachedOsClient = LocalStorageManager.get("OsClient");
+        if (!DiyCommon.IsNull(cachedOsClient)) {
+            return cachedOsClient;
+        } else if (!DiyCommon.IsNull(osClient)) {
+            return osClient;
+        } else {
+            return "iTdos";
+        }
+    },
+    /**
+     * 获取当前客户端类型
+     * 返回值：PC、IOS、Android、H5、WeChat
+     * 优先级：5+App原生环境 > 微信浏览器 > 移动端H5 > PC
+     */
+    GetClientType() {
+        // 5+App 原生环境（HBuilder 打包的 APK/IPA）
+        if (typeof window !== 'undefined' && window.plus) {
+            var plusOs = '';
+            try { plusOs = plus.os.name; } catch (e) { }
+            if (plusOs === 'iOS') return 'IOS';
+            if (plusOs === 'Android') return 'Android';
+            return 'Android'; // 默认 Android
+        }
+        var ua = navigator.userAgent || '';
+        // 微信内置浏览器
+        if (/MicroMessenger/i.test(ua)) return 'WeChat';
+        // 移动端浏览器（H5）
+        if (/Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua)) return 'H5';
+        // 桌面端
+        return 'PC';
+    },
+    GetApiClientUrl() {
+        var self = this;
+        var customerApi = "";
+        var osClient = DiyCommon.GetOsClient(); // store.state.DiyStore.OsClient;
+
+        if (osClient == "Auth" || osClient == "Api" || osClient == "iTdos") {
+            customerApi = "";
+        } else {
+            customerApi = osClient;
+        }
+
+        return customerApi == "" ? "" : customerApi + "/";
+    },
+    // video格式：[{src:'',type:'video/mp4'}]
+    LoadVideoLogin: function (poster, video, isOpenAudio) {
+        var self = this;
+        // 现在是调用新的插件
+        // DiyCommon.$nextTick(function () {//2020-04-22临时注释
+        if (DiyCommon.ShowVideo()) {
+            var video = document.querySelector("#videoLogin");
+            // enableInlineVideo(video);
+        }
+        // });
+
+        // 如果不用video.js，就直接return。
+        return;
+        if (!DiyCommon.IsNull(store.state.DiyStore.DesktopBg.LockVideoUrl)) {
+            if (DiyCommon.videoLoginObj == null) {
+                DiyCommon.videoLoginObj = videojs(
+                    "videoLogin",
+                    {
+                        autoplay: true,
+                        controls: false,
+                        loop: true,
+                        preload: "none",
+                        muted: !store.state.DiyStore.DesktopBg.LockVideoVoice,
+                        poster: store.state.DiyStore.DesktopBg.LockImgUrl,
+                        sources: [
+                            {
+                                src: store.state.DiyStore.DesktopBg.LockVideoUrl,
+                                type: "video/mp4"
+                            }
+                        ],
+                        bigPlayButton: false,
+                        textTrackDisplay: false,
+                        posterImage: true,
+                        errorDisplay: false,
+                        controlBar: false
+                    },
+                    function () {
+                        if (DiyCommon.IsNull(store.getters["DiyStore/GetCurrentUser"].Id)) {
+                            DiyCommon.videoLoginObj.play();
+                        }
+                    }
+                );
+            } else {
+                if (!DiyCommon.IsNull(poster)) {
+                    DiyCommon.videoLoginObj.poster(poster);
+                }
+                if (!DiyCommon.IsNull(video)) {
+                    DiyCommon.videoLoginObj.src(video);
+                }
+                if (!DiyCommon.IsNull(isOpenAudio)) {
+                    DiyCommon.videoLoginObj.muted(!isOpenAudio);
+                }
+                if (DiyCommon.IsNull(store.getters["DiyStore/GetCurrentUser"].Id)) {
+                    if (!DiyCommon.IsNull(poster) || !DiyCommon.IsNull(video)) {
+                        DiyCommon.videoLoginObj.load();
+                    } else {
+                        DiyCommon.videoLoginObj.play();
+                    }
+                }
+            }
+        }
+    },
+
+    LoadVideoDesktop: function (poster, video, isOpenAudio) {
+        var self = this;
+        // 现在是调用新的插件
+        // DiyCommon.$nextTick(function () {//2020-04-22临时注释
+        if (!DiyCommon.IsNull(store.state.DiyStore.DesktopBg.VideoUrl) && !DiyCommon.IsNull(store.getters["DiyStore/GetCurrentUser"].Id)) {
+            var video = document.querySelector("#videoDesktop");
+            // enableInlineVideo(video);
+        }
+        // });
+
+        // 如果不用video.js，就直接return。
+        return;
+        if (!DiyCommon.IsNull(store.state.DiyStore.DesktopBg.VideoUrl)) {
+            if (DiyCommon.videoDesktopObj == null) {
+                DiyCommon.videoDesktopObj = videojs(
+                    "videoDesktop",
+                    {
+                        autoplay: true,
+                        controls: false,
+                        loop: true,
+                        preload: "auto",
+                        muted: !store.state.DiyStore.DesktopBg.VideoVoice,
+                        poster: store.state.DiyStore.DesktopBg.ImgUrl,
+                        sources: [
+                            {
+                                src: store.state.DiyStore.DesktopBg.VideoUrl,
+                                type: "video/mp4"
+                            }
+                        ],
+                        bigPlayButton: false,
+                        textTrackDisplay: false,
+                        posterImage: true,
+                        errorDisplay: false,
+                        controlBar: false
+                    },
+                    function () {
+                        if (!DiyCommon.IsNull(store.getters["DiyStore/GetCurrentUser"].Id)) {
+                            DiyCommon.videoDesktopObj.play();
+                        }
+                    }
+                );
+            } else {
+                if (!DiyCommon.IsNull(poster)) {
+                    DiyCommon.videoDesktopObj.poster(poster);
+                }
+                if (!DiyCommon.IsNull(video)) {
+                    DiyCommon.videoDesktopObj.src(video);
+                }
+                if (!DiyCommon.IsNull(isOpenAudio)) {
+                    DiyCommon.videoDesktopObj.muted(!isOpenAudio);
+                }
+                if (!DiyCommon.IsNull(store.getters["DiyStore/GetCurrentUser"].Id)) {
+                    if (!DiyCommon.IsNull(poster) || !DiyCommon.IsNull(video)) {
+                        DiyCommon.videoDesktopObj.load();
+                    } else {
+                        DiyCommon.videoDesktopObj.play();
+                    }
+                }
+            }
+        }
+    },
+    DisposeVideoLogin: function () {
+        // 如果不用video.js，就直接return。
+        return;
+        var self = this;
+        if (DiyCommon.videoLoginObj) {
+            DiyCommon.videoLoginObj.pause();
+        }
+    },
+    DisposeVideoDesktop: function () {
+        // 如果不用video.js，就直接return。
+        return;
+        var self = this;
+        if (DiyCommon.videoDesktopObj) {
+            DiyCommon.videoDesktopObj.pause();
+        }
+    },
+    IsArray: function (val) {
+        return Array.isArray(val);
+    },
+    StrToJson: function (str) {
+        var self = this;
+        if (DiyCommon.IsNull(str)) {
+            return [];
+        }
+        return JSON.parse(str);
+    },
+    Page: function (pageNo, pageSize, array) {
+        var offset = (pageNo - 1) * pageSize;
+        return offset + pageSize >= array.length ? array.slice(offset, array.length) : array.slice(offset, offset + pageSize);
+    },
+    GetDid: function () {
+        var self = this;
+        try {
+            DiyCommon.Did = plus.device.uuid.split(",")[0];
+            if (DiyCommon.IsNull(DiyCommon.Did)) {
+                // 如果获取did失败，随机生成一个did（生成前查询是否已生成过）
+                var tDid = LocalStorageManager.get("Did");
+                if (DiyCommon.IsNull(tDid)) {
+                    tDid = DiyCommon.NewGuid();
+                    LocalStorageManager.set("Did", tDid);
+                }
+                DiyCommon.Did = tDid;
+            } else {
+                LocalStorageManager.set("Did", DiyCommon.Did);
+            }
+        } catch (error) {
+            // 如果获取did失败，随机生成一个did（生成前查询是否已生成过）
+            var tDid = LocalStorageManager.get("Did");
+            if (DiyCommon.IsNull(tDid)) {
+                tDid = DiyCommon.NewGuid();
+                LocalStorageManager.set("Did", tDid);
+            }
+            DiyCommon.Did = tDid;
+        }
+        return DiyCommon.Did;
+    },
+    NewGuid: function () {
+        // Crockford's Base32字母表（无I、L、O、U）
+        const ENCODING = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+        // 生成安全的随机字符
+        function getRandomChar() {
+            // 优先使用crypto API
+            if (window.crypto && window.crypto.getRandomValues) {
+                const buffer = new Uint8Array(1);
+                window.crypto.getRandomValues(buffer);
+                return ENCODING[buffer[0] % 32];
+            }
+
+            // 后备方案
+            const rand = Math.floor(Math.random() * 32);
+            return ENCODING[rand];
+        }
+
+        // 1. 时间戳部分（10个字符，48位毫秒时间戳）
+        let time = Date.now();
+        let timePart = "";
+
+        for (let i = 0; i < 10; i++) {
+            const mod = time % 32;
+            timePart = ENCODING[mod] + timePart;
+            time = Math.floor(time / 32);
+        }
+
+        // 2. 随机部分（16个字符）
+        let randomPart = "";
+        for (let i = 0; i < 16; i++) {
+            randomPart += getRandomChar();
+        }
+
+        return timePart + randomPart; // 26字符的ULID
+        return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+            var r = (Math.random() * 16) | 0;
+            var v = c == "x" ? r : (r & 0x3) | 0x8;
+            return v.toString(16);
+        });
+    },
+    GuidRemoveSing: function (guid) {
+        return guid.replace(/-/g, "");
+    },
+
+    plusReady: function (auto) {
+        var self = this;
+        // 获取本地应用资源版本号
+        plus.runtime.getProperty(plus.runtime.appid, function (inf) {
+            var wgtVer = Number(inf.version);
+            // 检测更新
+            DiyCommon.checkUpdate(wgtVer, auto);
+        });
+    },
+    // 检测更新
+    checkUpdate: function (wgtVer, auto) {
+        var self = this;
+        // 如果不是自动更新，是手动更新，则出现提示
+        if (auto === false) {
+            plus.nativeUI.showWaiting("检测更新...");
+        }
+        var xhr = new XMLHttpRequest();
+        xhr.onreadystatechange = function () {
+            switch (xhr.readyState) {
+                case 4:
+                    if (auto === false) {
+                        plus.nativeUI.closeWaiting();
+                    }
+                    if (xhr.status == 200) {
+                        // console.log("检测更新成功：" + xhr.responseText);
+                        var newVer = Number(xhr.responseText);
+                        if (wgtVer && newVer && wgtVer < newVer) {
+                            // 用户确认是否更新
+                            var dialogSet = JSON.parse(JSON.stringify(DiyCommon.layxSetConfirm));
+                            dialogSet.skin = "itdos-confirm-upt";
+                            DiyCommon.OsConfirm(getI18nMsg("FindNewVersion") + "<br>" + getI18nMsg("CurrentVersion") + wgtVer + "<br>" + getI18nMsg("NewVersion") + newVer, function () {
+                                DiyCommon.downWgt(); // 下载升级包
+                            });
+                            // layx.confirm('提示', '检测到新版本，是否更新？'
+                            // 	+ '<br>您当前版本：' + wgtVer
+                            // 	+ '<br>最新版本：' + newVer, function (id) {
+                            // 		DiyCommon.downWgt(); // 下载升级包
+                            // 		layx.destroy(id);
+                            // 	}, dialogSet);
+                        } else {
+                            if (auto === false) {
+                                plus.nativeUI.alert(getI18nMsg("NoNewVersion"));
+                            }
+                        }
+                    } else {
+                        if (auto === false) {
+                            // console.log("检测更新失败！");
+                            plus.nativeUI.alert(getI18nMsg("CheckVersionError"));
+                        }
+                    }
+                    break;
+                default:
+                    break;
+            }
+        };
+        xhr.open("GET", "https://api.itdos.com/api/os/GetAppVersion?OsClient=" + DiyCommon.GetOsClient());
+        xhr.send();
+    },
+    // 下载wgt文件
+    downWgt: function () {
+        var self = this;
+        plus.nativeUI.showWaiting("正在下载更新文件...");
+        plus.downloader
+            .createDownload(
+                "https://api.itdos.com/api/os/DownloadWgt?OsClient=" + DiyCommon.GetOsClient(),
+                {
+                    filename: "_doc/update/"
+                },
+                function (d, status) {
+                    if (status == 200) {
+                        plus.nativeUI.closeWaiting();
+                        // console.log("下载wgt成功：" + d.filename);
+                        DiyCommon.installWgt(d.filename); // 安装wgt包
+                    } else {
+                        plus.nativeUI.closeWaiting();
+                        // console.log("下载wgt失败！");
+                        plus.nativeUI.alert("下载wgt失败！");
+                    }
+                }
+            )
+            .start();
+    },
+    // 更新应用资源
+    installWgt: function (path) {
+        var self = this;
+        plus.nativeUI.showWaiting(getI18nMsg("InstallingUpdate"));
+        plus.runtime.install(
+            path,
+            {},
+            function () {
+                plus.nativeUI.closeWaiting();
+                // console.log("安装wgt文件成功！");
+                plus.nativeUI.alert(getI18nMsg("UpdateSuccess"), function () {
+                    plus.runtime.restart();
+                });
+            },
+            function (e) {
+                plus.nativeUI.closeWaiting();
+                // console.log("安装wgt文件失败[" + e.code + "]：" + e.message);
+                plus.nativeUI.alert("安装更新文件失败[" + e.code + "]：" + e.message);
+            }
+        );
+    },
+
+    SetThemeColor: function (color) {
+        if ($("body").attr("class")) {
+            $("body").attr(
+                "class",
+                $("body")
+                    .attr("class")
+                    .replace(/\bmicroi-desktop-color.*?\b/g, "")
+                    .replace(/(^\s*)|(\s*$)/g, "")
+            );
+        }
+        document.body.classList.add("microi-desktop-color" + color);
+    },
+    SetWin10Loading: function (b) {
+        // this.SetOsLoading(b)
+        store.commit("DiyStore/SetOsLoading", b);
+    },
+    GetBizUserAllName: function (m) {
+        var self = this;
+        if (DiyCommon.IsNull(m)) {
+            return "";
+        }
+        var result = "";
+        if (!DiyCommon.IsNull(m.Name)) {
+            result += m.Name;
+        }
+        if (!DiyCommon.IsNull(m.NickName) && result != m.NickName) {
+            result += (DiyCommon.IsNull(result) ? "" : "/") + m.NickName;
+        }
+        return result;
+    },
+    // t:时间，单位s
+    TopTips: function (c, b, t) {
+        this.Tips(c, b, t, true);
+    },
+    // icon: success，error，info和warning
+    // option
+    OsPrompt: function (content, okCallback, cancelCallback, option) {
+        var self = this;
+        if (DiyCommon.IsNull(option)) {
+            option = {
+                Title: getI18nMsg("Tips"),
+                Icon: "warning",
+                OkText: getI18nMsg("Ok"),
+                CancelText: getI18nMsg("Cancel")
+            };
+        }
+        if (DiyCommon.IsNull(option.Title)) {
+            option.Title = getI18nMsg("Tips");
+        }
+        if (DiyCommon.IsNull(option.Icon)) {
+            option.Icon = "warning";
+        }
+        if (DiyCommon.IsNull(option.OkText)) {
+            option.OkText = getI18nMsg("Ok");
+        }
+        if (DiyCommon.IsNull(option.CancelText)) {
+            option.CancelText = getI18nMsg("Cancel");
+        }
+        this.$prompt(content, option.Title, {
+            dangerouslyUseHTMLString: true,
+            confirmButtonText: option.OkText,
+            cancelButtonText: option.CancelText
+            // inputPattern: /[\w!#$%&'*+/=?^_`{|}~-]+(?:\.[\w!#$%&'*+/=?^_`{|}~-]+)*@(?:[\w](?:[\w-]*[\w])?\.)+[\w](?:[\w-]*[\w])?/,
+            // inputErrorMessage: '邮箱格式不正确'
+        })
+            .then(({ value }) => {
+                okCallback(value);
+            })
+            .catch(() => {
+                if (!DiyCommon.IsNull(cancelCallback)) {
+                    cancelCallback();
+                }
+            });
+    },
+    OsConfirm: function (content, okCallback, cancelCallback, option) {
+        var self = this;
+        if (DiyCommon.IsNull(option)) {
+            option = {};
+        }
+        if (DiyCommon.IsNull(option.Title)) {
+            option.Title = getI18nMsg("Tips");
+        }
+        if (DiyCommon.IsNull(option.Icon)) {
+            option.Icon = "warning";
+        }
+        if (DiyCommon.IsNull(option.OkText)) {
+            option.OkText = getI18nMsg("Ok");
+        }
+        if (DiyCommon.IsNull(option.CancelText)) {
+            option.CancelText = getI18nMsg("Cancel");
+        }
+        if (DiyCommon.IsNull(option.ShowClose)) {
+            option.ShowClose = true;
+        }
+        if (DiyCommon.IsNull(option.ShowCancelButton)) {
+            option.ShowCancelButton = true;
+        }
+        ElMessageBox.confirm(content, option.Title, {
+            confirmButtonText: option.OkText,
+            cancelButtonText: option.CancelText,
+            type: option.Icon,
+            roundButton: false,
+            dangerouslyUseHTMLString: true,
+            cancelButtonClass: "dialog-cancel",
+            closeOnClickModal: false,
+            closeOnPressEscape: false,
+            closeOnHashChange: false,
+
+            showClose: option.ShowClose,
+            showCancelButton: option.ShowCancelButton
+        })
+            .then(() => {
+                okCallback();
+            })
+            .catch(() => {
+                if (!DiyCommon.IsNull(cancelCallback)) {
+                    cancelCallback();
+                }
+            });
+    },
+    // success, warning, info, error
+    OsAlert: function (content, option) {
+        var self = this;
+        if (DiyCommon.IsNull(option)) {
+            option = {
+                Title: getI18nMsg("Tips"),
+                Icon: "warning"
+            };
+        } else if (option === false) {
+            option = {
+                Title: getI18nMsg("Tips"),
+                Icon: "error"
+            };
+        }
+        if (DiyCommon.IsNull(option.Title)) {
+            option.Title = getI18nMsg("Tips");
+        }
+        if (DiyCommon.IsNull(option.Icon)) {
+            option.Icon = "warning";
+        }
+
+        // 创建通知实例，让 Element Plus 自然管理其生命周期
+        const notification = ElNotification({
+            title: option.Title,
+            message: content,
+            type: option.Icon,
+            position: "bottom-right",
+            offset: 40,
+            dangerouslyUseHTMLString: true
+            // 移除 onClose 中的手动 DOM 操作，避免破坏 Vue 组件生命周期
+        });
+
+        if (option.Icon === "error") {
+            try {
+                var obj = $("#audioError")[0];
+                obj.currentTime = 0;
+                obj.play();
+            } catch (error) {}
+        }
+    },
+    Tips: function (c, b, t, option) {
+        var self = this;
+        if (c == "登录身份已过期！") {
+        }
+        if (DiyCommon.IsNull(b)) {
+            b = true;
+        }
+        var messageType = "success";
+        if (b === false) {
+            messageType = "error";
+        } else if (typeof b === "string" && ["success", "warning", "info", "error"].indexOf(b) > -1) {
+            messageType = b;
+        }
+
+        if (DiyCommon.IsNull(t)) {
+            if (messageType === "success") {
+                t = 3000;
+            } else {
+                t = 10000;
+            }
+        } else {
+            if (t < 1000) {
+                t = t * 1000;
+            }
+        }
+
+        // layx提示
+        // (isTop === true || top.layx ? top.layx : layx).msg(c, {
+        // 	//id: 'tips',
+        // 	dialogIcon: b === true ? 'success' : 'error',
+        // 	storeStatus: false,
+        // 	autodestroy: t,
+        // 	position: 'rb',
+        // 	skin: 'itdos-tips',
+        // 	borderRadius: '0px',
+        // 	//width:360,
+        // 	//height:63,
+        // 	event: {
+        // 		before: function (layxOs, winform) {
+        // 		},
+        // 		after: function (layxOs, winform) {
+        // 			//$(layxOs).css('z-index','30000000');
+        // 		}
+        // 	}
+        // });
+
+        // element-ui提示   success, warning, info, error
+        var position = "bottom-right";
+        if (option && option.position) {
+            position = option.position;
+        }
+        var nParam = {
+            title: getI18nMsg("Tips"),
+            message: c,
+            type: messageType,
+            customClass: "microi-tips-" + messageType,
+            position: position,
+            // duration: t ,
+            offset: 40,
+            dangerouslyUseHTMLString: true
+            // 移除 onClose 回调，避免干扰 Element Plus 组件的正常生命周期
+            // 之前的 cleanupHiddenElements 调用会破坏 Vue 组件实例，导致更新错误
+        };
+        if (!DiyCommon.IsNull(t)) {
+            nParam.duration = t;
+        }
+        const notification = ElNotification(nParam);
+
+        if (messageType === "error") {
+            try {
+                var obj = $("#audioError")[0];
+                obj.currentTime = 0;
+                obj.play();
+            } catch (error) {}
+        }
+
+        // layer提示
+        // layer.msg(c, {
+        // 	offset: 'rb',
+        // 	anim: b === true ? 0 : 6,
+        // 	time: t,
+        // 	skin: 'dos-ui-os-tips',
+        // });
+    },
+    Result: function (result) {
+        var self = this;
+        if (!result) {
+            return false;
+        }
+        if (result.Success || result.IsSuccess || result.Code == 1) {
+            return true;
+        } else {
+            if (result.Code == 1001 || result.Code == 1002) {
+                // if (DiyCommon.IsNull(store.getters['DiyStore/GetCurrentUser'].Id) && (window.location.href.indexOf('www.itdos.com') > -1 || process.env.NODE_ENV === 'development')) {
+                // 	var demoData = {"_Child":null,"ParentId":"00000000-0000-0000-0000-000000000000","GroupName":null,"IsAdmin":false,"Authorization":null,"Id":"95b3bc3f-caeb-4feb-9f7e-cc7e922e6032","No":"Hr2018#0003","Account":"demo","Pwd":"O+OC8oCmsBk=","RealName":null,"MobilePhone":null,"CreateTime":"2018-07-07 06:23","State":1,"Avatar":null,"Remark":null,"InitCalendar":false,"Sex":null,"IDNo":null,"Tel":null,"Address":null,"Notes":null,"Email":null,"WrokAge":0.0,"Territory":null,"Emergency":null,"EmergencyTel":null,"JoinTime":null,"LeaveTime":null,"IsDelete":false,"Class":null};
+                // 	DiyCommon.SetCurrentUser({ Data: demoData});
+                // 	DiyCommon.Post('/api/SysUser/TestLogin', {}, function (result) {
+                // 		DiyCommon.SetCurrentUser({ Data: result.Data });
+                // 		//location.reload();
+                // 	});
+                // 	return true;
+                // }
+                // console.log('iTdos ---------------result.Code == 1001 || result.Code == 1002------------------')
+                // console.log(result)
+                //2020-12-05注释，使用DiyCommon
+                // store.dispatch('user/resetToken').then(() => {
+                //     //location.reload()
+                // })
+                DiyCommon.setToken("");
+                removeToken();
+
+                DiyCommon.OpenLogin();
+            } else if (result.Code == 1002) {
+                // if (top.window.frames.length > 0) {
+                // 	DiyCommon.OpenLogin();
+                // 	top.window.location.reload();
+                // } else {
+                // 	DiyCommon.OpenLogin();
+                // }
+                console.log("iTdos -----------result.Code == 1002--------------");
+                console.log(result);
+                //2020-12-05注释，使用DiyCommon
+                // store.dispatch('user/resetToken').then(() => {
+                //     // location.reload()
+                // })
+                DiyCommon.setToken("");
+                removeToken();
+
+                DiyCommon.OpenLogin();
+            }
+            setTimeout(function () {
+                if(!(result.Code == 1001 
+                    && (window.location.href.indexOf("#/login") > -1 
+                            || window.location.hash == '#/' 
+                            || window.location.hash == ''))){
+                    DiyCommon.Tips(result.Msg || result.Message, false);
+                }
+            }, 500);
+            
+            // if (!(result.Code == 1001 && DiyCommon.IsNull(store.getters["DiyStore/GetCurrentUser"].Id))) {
+            //     var msg = (DiyCommon.IsNull(result.Message) ? "" : result.Message) + (DiyCommon.IsNull(result.Msg) ? "" : result.Msg);
+            //     DiyCommon.Tips(msg, false);
+            // }
+        }
+    },
+    OpenLogin: function () {
+        var self = this;
+        // $('#divLogin').animate({'top':'0%'},700);
+        // isNeedLogin = true
+        // if (firstLoginCover == false) {
+        //     $('#divLogin').css({
+        //         'top': '0%'// 盖下来
+        //     })
+        // }
+        // setTimeout(function(){
+        // 	layx.html('divTips','技术架构',$('#divTips')[0],{
+        // 		floatTarget:$('.bottomTipsITdos')[0],
+        // 		width:$('.divLoginCenter').width(),
+        // 		height:180,
+        //    });
+        // },1000);
+        store.commit("DiyStore/SetCurrentUser", {});
+        //注意这里不能跳转，否则会一直无限跳转。跳转前要先判断当前是不是已经登录了，已经登录的状态才需要跳转
+        // store.push(`/login?redirect=`)//${store.route.fullPath}
+        // location.reload();
+        //如果不是登录界面，需要跳转到登录？ 2022-04-10改成不在这里跳转
+        if (!(location.href.indexOf("login") > -1)) {
+            // location.reload();
+            // new Router().push(`/login`);
+            // self.$router.push(`/login`);
+            //2022-04-10注释
+            // if (window.location.href.indexOf('OsClient') > -1) {
+            //     // window.location.href = `/?OsClient=${DiyCommon.GetOsClient()}#/login`;
+            //     window.location.href = window.location.origin + window.location.pathname + `?OsClient=${DiyCommon.GetOsClient()}#/login`;
+            // }else{
+            //     window.location.href = window.location.origin + window.location.pathname + "#/login";
+            // }
+        }
+    },
+    Post: function (url, param, callback, errorCallback, other, paramType) {
+        var self = this;
+        var realUrl = "";
+        var header = {};
+        if (typeof url == "object") {
+            realUrl = url.url;
+            param = url.data;
+            callback = url.success;
+            errorCallback = url.error || url.fail;
+            other = url.other;
+            paramType = url.dataType;
+            header = url.header;
+        } else {
+            realUrl = url;
+        }
+
+        if (DiyCommon.IsNull(realUrl)) {
+            DiyCommon.Tips("url不能为空！", false);
+            return;
+        }
+
+        if (realUrl.indexOf("http://") <= -1 && realUrl.indexOf("https://") <= -1) {
+            realUrl = DiyCommon.GetApiBase() + realUrl;
+        }
+        var axiosOption = {
+            url: realUrl,
+            param: param,
+            callback: callback,
+            errorCallback: errorCallback,
+            method: "post",
+            other: other,
+            paramType: paramType,
+            header: header
+        };
+
+        DiyCommon.UseAxios(axiosOption);
+    },
+    PostAsync: async function (url, param, callback, errorCallback, paramType) {
+        var self = this;
+        var realUrl = "";
+        var header = {};
+        var other = "";
+        if (typeof url == "object") {
+            realUrl = url.url;
+            param = url.data;
+            callback = url.success;
+            errorCallback = url.fail;
+            other = url.other;
+            paramType = url.dataType;
+            header = url.header;
+        } else {
+            realUrl = url;
+        }
+        if (DiyCommon.IsNull(realUrl)) {
+            DiyCommon.Tips("url不能为空！", false);
+            return;
+        }
+
+        if (realUrl.indexOf("http://") <= -1 && realUrl.indexOf("https://") <= -1) {
+            realUrl = DiyCommon.GetApiBase() + realUrl;
+        }
+        return await new Promise((resolve, reject) => {
+            DiyCommon.UseAxios({
+                url: realUrl,
+                param: param,
+                callback: callback,
+                errorCallback: errorCallback,
+                method: "post",
+                sync: true,
+                other: null,
+                resolve: resolve,
+                paramType: paramType,
+                header: header
+            });
+        });
+    },
+    Get: function (url, param, callback, errorCallback) {
+        var self = this;
+        if (url.indexOf("http://") <= -1 && url.indexOf("https://") <= -1) {
+            url = DiyCommon.GetApiBase() + url;
+        }
+        DiyCommon.UseAxios({
+            url: url,
+            param: param,
+            callback: callback,
+            errorCallback: errorCallback,
+            method: "get"
+        });
+    },
+    GetSync: async function (url, param, callback, errorCallback) {
+        var self = this;
+        if (url.indexOf("http://") <= -1 && url.indexOf("https://") <= -1) {
+            url = DiyCommon.GetApiBase() + url;
+        }
+        return await new Promise((resolve, reject) => {
+            DiyCommon.UseAxios({
+                url: url,
+                param: param,
+                callback: callback,
+                errorCallback: errorCallback,
+                method: "get",
+                sync: true,
+                other: null,
+                resolve: resolve
+            });
+        });
+    },
+    GetAsync: async function (url, param, callback, errorCallback) {
+        var self = this;
+        if (url.indexOf("http://") <= -1 && url.indexOf("https://") <= -1) {
+            url = DiyCommon.GetApiBase() + url;
+        }
+        return await new Promise((resolve, reject) => {
+            DiyCommon.UseAxios({
+                url: url,
+                param: param,
+                callback: callback,
+                errorCallback: errorCallback,
+                method: "get",
+                sync: true,
+                other: null,
+                resolve: resolve
+            });
+        });
+    },
+    // allParams:[{Url:'', Param:{}}, {Url:'', Param:{}}]
+    PostAll: function (allParams, callback, errorCallback) {
+        var self = this;
+        allParams.forEach((param) => {
+            if (param.Url.indexOf("http://") <= -1 && param.Url.indexOf("https://") <= -1) {
+                param.Url = DiyCommon.GetApiBase() + param.Url;
+            }
+        });
+
+        DiyCommon.UseAxiosAll({
+            allParams: allParams,
+            callback: callback,
+            errorCallback: errorCallback,
+            method: "post"
+        });
+    },
+    PostAllAsync: async function (allParams, callback, errorCallback) {
+        var self = this;
+        allParams.forEach((param) => {
+            if (param.Url.indexOf("http://") <= -1 && param.Url.indexOf("https://") <= -1) {
+                param.Url = DiyCommon.GetApiBase() + param.Url;
+            }
+        });
+        return await new Promise((resolve, reject) => {
+            DiyCommon.UseAxiosAll({
+                allParams: allParams,
+                callback: callback,
+                errorCallback: errorCallback,
+                method: "post",
+                resolve: resolve
+            });
+        });
+    },
+    UseAxios: function (params) {
+        var self = this;
+        var { url, param, callback, errorCallback, method, sync, other, resolve, paramType, header } = params;
+        if (!header) {
+            header = {};
+        }
+        header.did = DiyCommon.GetDid();
+        if (!DiyCommon.IsNull(DiyCommon.getToken())) {
+            header.authorization = "Bearer " + DiyCommon.getToken();
+        }
+        header.macaddress = LocalStorageManager.get("MacAddress") || "";
+        header.lang = LocalStorageManager.get("Lang") || "zh-CN";
+        var axiosOption = {
+            url: url,
+            method: method, //'post',
+            //2026-01-06 Anderson：如果接口引擎返回的是字符串（特别是base64的字符串），这里必须是text。因此注释这句，既能接收json，也能接收字符串。
+            // responseType: "json",
+            changeOrigin: true,
+            headers: header
+        };
+        if (method == "post") {
+            axiosOption.data = param;
+            // if (paramType && paramType.toLowerCase() == "json") {
+            //     axiosOption.data = param;
+            // } else if (
+            //     url.indexOf("/api/ApiEngine/") > -1 ||
+            //     url.indexOf("/api/DataSourceEngine/") > -1 ||
+            //     url.indexOf("/api/FormEngine/") > -1 ||
+            //     url.indexOf("/api/ModuleEngine/") > -1 ||
+            //     url.indexOf("/apiengine") > -1 ||
+            // ) {
+            //     axiosOption.data = param;
+            // } else {
+            //     axiosOption.data = qs.stringify(param);
+            // }
+        } else if (method == "get") {
+            axiosOption.params = param;
+        } else {
+            DiyCommon.Tips("Error method:" + method, false);
+            return;
+        }
+        axios(axiosOption)
+            .then(function (req, b, c) {
+                // 拿到token，存起来
+                var authorization = req.headers.authorization;
+                if (!DiyCommon.IsNull(authorization)) {
+                    store.commit("user/SET_TOKEN", authorization);
+                    DiyCommon.setToken(authorization);
+                    setToken(authorization);
+                    DiyCommon.setTokenExpires(new Date().AddTime("m", 15).Format("yyyy-MM-dd HH:mm:ss"));
+                    // Token 已通过 DiyCommon.setToken 存储到 LocalStorageManager
+                }
+                if (!DiyCommon.IsNull(callback)) {
+                    callback(req.data, req.headers);
+                }
+                if (!DiyCommon.IsNull(resolve)) {
+                    resolve(req.data, req.headers);
+                }
+            })
+            .catch(function (error) {
+                if (!DiyCommon.IsNull(errorCallback)) {
+                    errorCallback(error);
+                }
+                if (error.response) {
+                    if (error.response.status == 401) {
+                        console.log(error);
+                        DiyCommon.setToken("");
+                        removeToken();
+                        // 弹出登录（并发节流：多个请求同时 401 只弹一次）
+                        if (!DiyCommon._LoginPending) {
+                            DiyCommon._LoginPending = true;
+                            try {
+                                var ret = DiyCommon.OpenLogin();
+                                if (ret && typeof ret.finally === "function") {
+                                    ret.finally(function () { DiyCommon._LoginPending = false; });
+                                } else {
+                                    setTimeout(function () { DiyCommon._LoginPending = false; }, 3000);
+                                }
+                            } catch (e) {
+                                DiyCommon._LoginPending = false;
+                            }
+                        }
+                    }
+                    DiyCommon.Tips(error.response.status + " " + error.message, false);
+                } else {
+                    console.log(error);
+                }
+                throw error;
+            });
+    },
+    UseAxiosAll: function (params) {
+        var self = this;
+        const { allParams, callback, errorCallback, method, resolve, paramType } = params;
+        var headers = {};
+        headers.did = DiyCommon.GetDid();
+        if (!DiyCommon.IsNull(DiyCommon.getToken())) {
+            headers.authorization = "Bearer " + DiyCommon.getToken();
+        }
+        headers.macaddress = LocalStorageManager.get("MacAddress") || "";
+        headers.lang = LocalStorageManager.get("Lang") || "zh-CN";
+
+        var requests = [];
+        allParams.forEach((param) => {
+            var url = param.Url;
+            var axiosOption = {
+                url: param.Url,
+                method: method,
+                //2026-01-06 Anderson：如果接口引擎返回的是字符串（特别是base64的字符串），这里必须是text。因此注释这句，既能接收json，也能接收字符串。
+                // responseType: "json",
+                changeOrigin: true,
+                // 从.net core2.1更新至2.2后，这里不能设置，否则反而不能跨域。但按理说应该要设置。
+                // withCredentials:true,
+                // data: qs.stringify(param.Param),
+                // headers:{'Content-Type':'application/x-www-form-urlencoded'}
+                headers: headers
+            };
+            if (method == "post") {
+                axiosOption.data = param.Param;
+                // if (paramType && paramType.toLowerCase() == "json") {
+                //     axiosOption.data = param.Param;
+                // } else if (url.indexOf("/api/ApiEngine/") > -1 || url.indexOf("/api/DataSourceEngine/") > -1 || url.indexOf("/api/FormEngine/") > -1 || url.indexOf("/api/ModuleEngine/") > -1) {
+                //     axiosOption.data = param.Param;
+                // } else {
+                //     axiosOption.data = qs.stringify(param.Param);
+                // }
+            } else if (method == "get") {
+                axiosOption.params = param.Param;
+            } else {
+                DiyCommon.Tips("Error method:" + method, false);
+                return;
+            }
+            requests.push(axios(axiosOption));
+        });
+
+        axios
+            .all(requests)
+            .then((results) => {
+                var returnData = [];
+                if (results.length > 0) {
+                    // 拿到token，存起来
+                    var result = results[0];
+                    var token = result.headers.token;
+                    if (!DiyCommon.IsNull(token)) {
+                        DiyCommon.setToken(token);
+                        // Token 已通过 DiyCommon.setToken 存储到 LocalStorageManager
+                    }
+                    var authorization = result.headers.authorization;
+                    if (!DiyCommon.IsNull(authorization)) {
+                        // store.commit('user/SET_TOKEN', authorization)
+                        DiyCommon.setToken(authorization);
+                        setToken(authorization);
+                        DiyCommon.setTokenExpires(new Date().AddTime("m", 15).Format("yyyy-MM-dd HH:mm:ss"));
+                        // Token 已通过 DiyCommon.setToken 存储到 LocalStorageManager
+                    }
+                }
+                results.forEach((result) => {
+                    returnData.push(result.data);
+                });
+                callback(returnData);
+                if (!DiyCommon.IsNull(resolve)) {
+                    resolve(returnData);
+                }
+            })
+            .catch(function (error) {
+                if (!DiyCommon.IsNull(errorCallback)) {
+                    errorCallback();
+                }
+                if (error.response) {
+                    if (error.response.status == 401) {
+                        console.log("iTdos -------------error.response.status == 401----------------");
+                        console.log(error);
+
+                        //2020-12-05注释，使用DiyCommon
+                        // store.dispatch('user/resetToken').then(() => {
+                        //     // location.reload()
+                        // })
+                        DiyCommon.setToken("");
+                        removeToken();
+
+                        // 弹出登录（并发节流）
+                        if (!DiyCommon._LoginPending) {
+                            DiyCommon._LoginPending = true;
+                            try {
+                                var ret = DiyCommon.OpenLogin();
+                                if (ret && typeof ret.finally === "function") {
+                                    ret.finally(function () { DiyCommon._LoginPending = false; });
+                                } else {
+                                    setTimeout(function () { DiyCommon._LoginPending = false; }, 3000);
+                                }
+                            } catch (e) {
+                                DiyCommon._LoginPending = false;
+                            }
+                        }
+                        DiyCommon.Tips(error.response.status + " " + error.message, false);
+                    } else {
+                        DiyCommon.Tips(error.response.status + " " + error.message, false);
+                    }
+                } else {
+                    DiyCommon.Tips(error.message, false);
+                }
+                throw error;
+            });
+    },
+    GetSysBaseData: function (parantId, callback) {
+        var self = this;
+        DiyCommon.Post(
+            DiyApi.GetSysBaseData(),
+            { ParentId: parantId },
+            function (result) {
+                if (DiyCommon.Result(result)) {
+                    callback(result.Data);
+                }
+            },
+            function () {}
+        );
+    },
+    GetSysBaseDataStep: function (parantKey, callback) {
+        var self = this;
+        DiyCommon.Post(
+            DiyApi.GetSysBaseDataStep(),
+            { ParentKey: parantKey },
+            function (result) {
+                if (DiyCommon.Result(result)) {
+                    callback(result.Data);
+                }
+            },
+            function () {}
+        );
+        //
+    },
+    UploadPdfBefore: function (file) {
+        var self = this;
+        const isJPG = file.type === "application/pdf" || file.type === "application/pdfx";
+        const isLtMax = file.size / 1024 / 1024 < DiyCommon.UploadPdfMaxSize;
+        if (!isJPG) {
+            DiyCommon.Tips(getI18nMsg("FormatError") + file.type, false);
+            return false;
+        }
+        if (!isLtMax) {
+            DiyCommon.Tips(getI18nMsg("MaxSize") + DiyCommon.UploadPdfMaxSize + "MB!", false);
+            return false;
+        }
+        DiyCommon.Tips(getI18nMsg("Uploading"));
+        return isJPG && isLtMax;
+    },
+    UploadImgBefore: function (file) {
+        var self = this;
+        const isJPG =
+            file.type === "image/jpeg" ||
+            file.type === "image/png" ||
+            file.type === "image/bmp" ||
+            file.type === "image/svg" ||
+            file.type.toLowerCase().indexOf("icon") > -1 ||
+            file.type.toLowerCase().indexOf("ico") > -1 ||
+            file.type === "image/gif";
+
+        const isLtMax = file.size / 1024 / 1024 < DiyCommon.UploadImgMaxSize;
+        if (!isJPG) {
+            DiyCommon.Tips(getI18nMsg("FormatError") + file.type, false);
+            return false;
+        }
+        if (!isLtMax) {
+            DiyCommon.Tips(getI18nMsg("MaxSize") + DiyCommon.UploadImgMaxSize + "MB!", false);
+            return false;
+        }
+        DiyCommon.Tips(getI18nMsg("Uploading"));
+        return isJPG && isLtMax;
+    },
+    ChangePageTabName(routerName, tabName) {
+        var self = this;
+        // var item = store.state.tagsView.visitedViews.filter(item => item.name == routerName)
+        // if (item.length > 0) {
+        //     item[0].title = tabName
+        // }
+    },
+    Add0(value, length) {
+        var self = this;
+        if (DiyCommon.IsNull(value) || DiyCommon.IsNull(length)) {
+            return value;
+        }
+        var count0 = length - value.toString().length;
+        for (let index = 0; index < count0; index++) {
+            value = "0" + value;
+        }
+        return value;
+    },
+    DiyFieldConfigStrToJson(field) {
+        var self = this;
+
+        // 配置表单可选项
+        if (DiyCommon.IsNull(field.Data)) {
+            field.Data = [];
+        } else if (!Array.isArray(field.Data)) {
+            try {
+                field.Data = JSON.parse(field.Data);
+            } catch (error) {
+                field.Data = [];
+            }
+        }
+
+        if (DiyCommon.IsNull(field.BindRole)) {
+            field.BindRole = [];
+        } else if (!Array.isArray(field.BindRole)) {
+            try {
+                field.BindRole = JSON.parse(field.BindRole);
+            } catch (error) {
+                field.BindRole = [];
+            }
+        }
+
+        var defaultConfig = {
+            ParamData: {},
+            KeysAddVisible: false,
+            KeysAddVModel: "",
+            Sql: "",
+            EnableSearch: true,
+            NumberTextStep: 1,
+            NumberTextPrecision: 0,
+            NumberText: 0,
+            NumberTextMath: "",
+            NumberTextBtn: true,
+            NumberTextBtnPosition: "right",
+            Textarea: {
+                DefaultRows: 5
+            },
+            V8Code: "",
+            V8CodeBlur: "",
+            DividerPosition: "left",
+            //分割线
+            Divider: {
+                Icon: ""
+            },
+            CollapseGroup: {
+                DefaultCollapsed: false,
+                ScopeMode: "UntilNextGroup",
+                FieldCount: 10,
+                Description: "",
+                Icon: "fas fa-layer-group",
+                Theme: "default",
+                ShowFieldCount: true
+            },
+            FieldTabs: {
+                ScopeMode: "FieldCount",
+                TotalFieldCount: 0,
+                DefaultActiveKey: "tab1",
+                Type: "card",
+                Position: "top",
+                Stretch: false,
+                ShowFieldCount: true,
+                CaptureRest: true,
+                Description: "",
+                Theme: "default",
+                Tabs: [
+                    { Key: "tab1", Title: "基础信息", Icon: "fas fa-id-card", FieldCount: 4, Disabled: false },
+                    { Key: "tab2", Title: "扩展信息", Icon: "fas fa-layer-group", FieldCount: 4, Disabled: false }
+                ]
+            },
+            Alert: {
+                Title: "",
+                Content: "",
+                Type: "info",
+                Effect: "light",
+                ShowIcon: true
+            },
+            StaticText: {
+                Title: "",
+                Content: "",
+                Align: "left",
+                Theme: "default"
+            },
+            Html: {
+                Content: "",
+                UseFieldValue: false,
+                MinHeight: "",
+                Padding: ""
+            },
+            Slider: {
+                Min: 0,
+                Max: 100,
+                Step: 1,
+                Range: false,
+                ShowInput: false,
+                ShowStops: false
+            },
+            TagInput: {
+                Placeholder: "请输入或选择标签",
+                Options: [],
+                MaxCount: 0
+            },
+            Transfer: {
+                LeftTitle: "可选项",
+                RightTitle: "已选项",
+                Filterable: true,
+                Options: []
+            },
+            DataSource: "",
+            DataSourceSqlRemote: false,
+            DataSourceSqlRemoteLoading: false,
+            DataSourceId: "",
+            DataSourceApiEngineKey: "",
+            TextShowPassword: false,
+            TextIcon: "",
+            TextIconPosition: "",
+            TextApend: "",
+            TextApendPosition: "",
+            SelectLabel: "",
+            SelectSaveField: "", //存储对应字段
+            SelectSaveFormat: "Text", //以前默认是Json，但这种设计有缺陷，不建议默认
+            DateTimeType: "date",
+            TextAutocomplete: false, // 是否启用搜索建议
+            AutoNumberFixed: "", // 自动编号固定前缀
+            AutoNumberLength: 1, // 自动编号位数
+            AutoNumberFields: [], //关联列，['id','id','id']
+            AutoNumber: {
+                DataRule: "",
+                CreateRule: ""
+            }, //关联列，['id','id','id']
+
+            ImgUpload: {
+                Limit: false, //限制匿名访问
+                Multiple: false, //多文件/多图上传
+                Tips: "",
+                MaxCount: 10,
+                ShowFileList: false,
+                Preview: true,
+                MaxSize: 10 //单位M
+            },
+            // ImgUploadLimit: false, // 文件/图片 上传   限制匿名访问
+            // ImgUploadMultiple: false, // 多文件上传
+            // ImgUploadTips: '只能上传图片文件', // 文件/图片 上传   限制匿名访问
+
+            // UploadMaxCount: 10, // 上传最大数量限制
+
+            FileUpload: {
+                Limit: true,
+                Multiple: true,
+                Tips: "",
+                MaxCount: 10,
+                ShowFileList: false,
+                MaxSize: 10 //单位M
+            },
+
+            Upload: {
+                BeforeUploadV8: "",
+                GetPrivateFileBeforeServerV8: "",
+                GetPrivateFileAfterServerV8: ""
+            },
+
+            // FileUploadLimit: true, // 文件/图片 上传   限制匿名访问
+            // FileUploadMultiple: true, // 多文件上传
+            // FileUploadTips: '附件最大500M', // 文件/图片 上传   限制匿名访问
+            DevComponentName: "",
+            DevComponentPath: "",
+            TableChildTableId: "",
+            TableChildSysMenuId: "",
+            TableChildSysMenuName: "",
+            TableChildFkFieldName: "",
+            TableChildCallbackField: "",
+            TableChildRowClickV8: "",
+            TableChild: {
+                Data: [],
+                SearchAppend: {},
+                //子表的上级关联模块
+                LastTableId: "",
+                LastSysMenuId: "",
+                LastSysMenuName: "",
+                LastSysMenuName: "",
+                PrimaryTableFieldName: "Id",
+                DisablePagination: false,
+                NoneDefaultHeight: false
+            },
+            JoinTable: {
+                TableId: "",
+                ModuleName: "",
+                ModuleId: "",
+                Where: ""
+            },
+            //JoinForm不在设计的时候指定TableId、Id、FormMode的值，是为了方便代码去动态控制
+            JoinForm: {
+                TableId: "", //TableId和TableName两个参数2选1传1个
+                TableName: "",
+                Id: "", //数据Id，也可以传入SearchEqual条件，2选1
+                FormMode: "",
+                _SearchEqual: {}
+            },
+
+            MapCompany: "Baidu",
+
+            Button: {
+                Type: "primary",
+                Loading: false,
+                Icon: "",
+                Size: "small",
+                PreviewCanClick: true,
+                RefreshTableAfterClick: false
+            },
+            Autocomplete: {},
+            Unique: {
+                Type: "Alone"
+            },
+            OpenTable: {
+                BtnName: "",
+                ShowDialog: false,
+                MultipleSelect: false,
+                SubmitV8: "",
+                BeforeOpenV8: "",
+                SearchAppend: {},
+                PropsWhere: []
+            },
+            Department: {
+                Multiple: false,
+                Filterable: false,
+                EmitPath: true
+            },
+
+            Cascader: {
+                Lazy: false, //动态加载
+                Filterable: false, //可搜索
+                Value: "",
+                Label: "",
+                Children: "",
+                ParentField: "",
+                ParentFields: "",
+                Multiple: false,
+                Disabled: "",
+                Leaf: "",
+                EmitPath: true
+            },
+            SelectTree: {
+                Lazy: false, //动态加载
+                Filterable: false, //可搜索
+                Value: "",
+                Label: "",
+                Children: "",
+                ParentField: "",
+                ParentFields: "",
+                Multiple: false,
+                Disabled: "",
+                Leaf: ""
+            },
+            CodeEditor: {
+                Height: ""
+            },
+            RichText: {
+                EditorProduct: ""
+            }
+        };
+        if (DiyCommon.IsNull(field.Config)) {
+            field.Config = defaultConfig;
+        } else if (typeof field.Config === "string") {
+            var tempConfigObj = {};
+            // console.log("1、field.Config（" + field.Name + "）: ", field.Config);
+            // 先清理 JSON 字符串值内的字面量控制字符（如 SQL 中未转义的真实换行符），避免 JSON.parse 报错
+            field.Config = field.Config.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+            try {
+                tempConfigObj = JSON.parse(field.Config);
+            } catch (error) {
+                try {
+                    field.Config = field.Config.replace(/\\\\/g, "\\");
+                    tempConfigObj = JSON.parse(field.Config);
+                } catch (error) {
+                    // 第三次尝试：基于错误位置的精确修复，不依赖任何已知字段名或字段顺序。
+                    // 算法：
+                    //   1. 从 JSON.parse 错误消息中提取出错位置 P（意外字符的位置）
+                    //   2. 向前回溯找到紧跟 "key": 之后的那个开头引号（即损坏字段值的起点）
+                    //   3. 从 P 往后逐个扫描候选闭合引号（后跟 , 或 }），逐一尝试替换为 ""
+                    //   4. 直到 JSON.parse 成功；如仍有损坏字段最多重复 5 次
+                    try {
+                        var repaired = field.Config;
+                        var repairedObj = null;
+                        for (var fixLoop = 0; fixLoop <= 5; fixLoop++) {
+                            try {
+                                repairedObj = JSON.parse(repaired);
+                                break; // 解析成功，退出循环
+                            } catch (loopErr) {
+                                if (fixLoop >= 5) break;
+                                // 从错误消息中提取出错位置
+                                var posMatch = loopErr.message.match(/position (\d+)/i);
+                                if (!posMatch) break;
+                                var errorPos = parseInt(posMatch[1]);
+
+                                // 向前回溯：找到损坏字符串值的起始引号（直接跟在 "key": 后面的 "）
+                                var valueOpenQuote = -1;
+                                for (var bi = errorPos - 2; bi >= 0; bi--) {
+                                    if (repaired[bi] !== '"') continue;
+                                    var bj = bi - 1;
+                                    while (bj >= 0 && (repaired[bj] === ' ' || repaired[bj] === '\t')) bj--;
+                                    if (bj >= 0 && repaired[bj] === ':') { valueOpenQuote = bi; break; }
+                                }
+                                if (valueOpenQuote < 0) break;
+
+                                // 向后扫描：找第一个"后跟 , 或 }"的候选闭合引号，用 "" 替换整个损坏值
+                                var fixedStr = null;
+                                for (var ei = errorPos; ei < repaired.length; ei++) {
+                                    if (repaired[ei] !== '"') continue;
+                                    var ni = ei + 1;
+                                    while (ni < repaired.length && (repaired[ni] === ' ' || repaired[ni] === '\t')) ni++;
+                                    if (ni < repaired.length && (repaired[ni] === ',' || repaired[ni] === '}')) {
+                                        var candidate = repaired.slice(0, valueOpenQuote) + '""' + repaired.slice(ei + 1);
+                                        try { JSON.parse(candidate); fixedStr = candidate; break; } catch (e3) { /* 继续下一个候选 */ }
+                                    }
+                                }
+                                if (!fixedStr) break;
+                                repaired = fixedStr;
+                            }
+                        }
+                        if (!repairedObj) throw new Error('自动修复失败');
+                        tempConfigObj = repairedObj;
+                        console.warn('field.Config（' + field.Name + '）：检测到含未转义引号的字段已自动清空，请重新配置。');
+                    } catch (error2) {
+                        console.log('field.Config（' + field.Name + '）: ', field.Config);
+                        console.error(error2);
+                        DiyCommon.Tips(
+                            '注意：字段【' + field.Name + '】出现了Config字段序列化报错，一般是由V8Code格式错误导致，请至数据库将V8Code置空，备份到别的地方，然后清除缓存，重新配置该字段的V8代码。',
+                            false
+                        );
+                        // 所有修复均失败，降级为默认配置，避免抛出未捕获异常
+                        tempConfigObj = defaultConfig;
+                    }
+                }
+            }
+            for (const config in defaultConfig) {
+                if (!tempConfigObj.hasOwnProperty(config)) {
+                    tempConfigObj[config] = defaultConfig[config];
+                }
+                if (config == "Department" || config == "Cascader") {
+                    if (!tempConfigObj[config].hasOwnProperty("EmitPath")) {
+                        tempConfigObj[config].EmitPath = true;
+                    }
+                }
+            }
+            //loading默认都为false
+            tempConfigObj.DataSourceSqlRemoteLoading = false;
+            tempConfigObj.Button.Loading = false;
+            tempConfigObj.ImgUpload.ShowFileList = false;
+            tempConfigObj.FileUpload.ShowFileList = false;
+            field.Config = tempConfigObj;
+        }
+    },
+    
+    /**
+     * ==================== 字段值处理器系统（配置驱动） ====================
+     * 
+     * 这是一个可扩展的字段值处理系统，通过配置而不是硬编码来处理不同组件类型的数据转换。
+     * 
+     * 使用方式：
+     * 1. 在 FieldValueHandlers 中注册组件的处理器
+     * 2. 调用 ProcessFieldValue(field, formData, context) 来处理字段值
+     * 
+     * 扩展方式：
+     * 只需在 FieldValueHandlers 对象中添加新的组件处理器即可，无需修改核心代码
+     */
+    FieldValueHandlers: {
+        // ==================== 多选类组件 ====================
+        "Checkbox": {
+            valueType: "array",
+            defaultValue: [],
+            process: function(field, formData, ctx) {
+                return DiyCommon.GetFieldJsonValue(field, formData, true);
+            },
+            postProcess: function(field, value, ctx) {
+                // 处理 Data 数据源回填
+                if (!DiyCommon.IsNull(value) && Array.isArray(value) && value.length > 0) {
+                    DiyCommon._fillFieldDataFromValue(field, value, true);
+                }
+                return value;
+            }
+        },
+        "MultipleSelect": {
+            valueType: "array",
+            defaultValue: [],
+            process: function(field, formData, ctx) {
+                var jsonValue = DiyCommon.GetFieldJsonValue(field, formData, true);
+                
+                // KeyValue 数据源：如果存储的是字符串数组（Key值数组），需要转换为完整对象数组
+                if (field.Config && field.Config.DataSource === "KeyValue" && Array.isArray(jsonValue) && jsonValue.length > 0) {
+                    // 检查第一个元素是否是字符串
+                    if (typeof jsonValue[0] === 'string' && field.Data && field.Data.length > 0) {
+                        var fullObjects = jsonValue.map(function(keyValue) {
+                            var found = field.Data.find(function(item) { 
+                                return (item.Key || item.key) == keyValue; 
+                            });
+                            if (found) {
+                                return {
+                                    Key: found.Key || found.key || '',
+                                    Value: found.Value || found.value || ''
+                                };
+                            }
+                            return keyValue; // 如果找不到，保持原值
+                        });
+                        return fullObjects;
+                    }
+                    // 如果已经是对象数组，标准化为 Key/Value
+                    if (typeof jsonValue[0] === 'object') {
+                        return jsonValue.map(function(item) {
+                            if (item.key !== undefined || item.value !== undefined) {
+                                return {
+                                    Key: item.Key || item.key || '',
+                                    Value: item.Value || item.value || ''
+                                };
+                            }
+                            return item;
+                        });
+                    }
+                }
+                
+                // 有 SelectSaveField 配置：如果是字符串数组，需要从field.Data查找完整对象
+                if ((!DiyCommon.IsNull(field.Config.SelectLabel) || !DiyCommon.IsNull(field.Config.SelectSaveField)) 
+                    && Array.isArray(jsonValue) && jsonValue.length > 0 && typeof jsonValue[0] === 'string' 
+                    && field.Data && field.Data.length > 0) {
+                    var saveField = field.Config.SelectSaveField || field.Config.SelectLabel;
+                    var fullObjects = jsonValue.map(function(strValue) {
+                        var found = field.Data.find(function(item) { 
+                            return item[saveField] == strValue; 
+                        });
+                        return found || strValue;
+                    });
+                    return fullObjects;
+                }
+                
+                return jsonValue;
+            },
+            postProcess: function(field, value, ctx) {
+                if (!DiyCommon.IsNull(value) && Array.isArray(value) && value.length > 0) {
+                    DiyCommon._fillFieldDataFromValue(field, value, true);
+                }
+                return value;
+            }
+        },
+        "TagInput": {
+            valueType: "array",
+            defaultValue: [],
+            process: function(field, formData, ctx) {
+                return DiyCommon.GetFieldJsonValue(field, formData, true);
+            }
+        },
+        "Transfer": {
+            valueType: "array",
+            defaultValue: [],
+            process: function(field, formData, ctx) {
+                return DiyCommon.GetFieldJsonValue(field, formData, true);
+            }
+        },
+        "Slider": {
+            valueType: "dynamic",
+            defaultValue: 0,
+            process: function(field, formData, ctx) {
+                var config = field.Config && field.Config.Slider ? field.Config.Slider : {};
+                if (config.Range === true) {
+                    return DiyCommon.GetFieldJsonValue(field, formData, true);
+                }
+                var rawValue = DiyCommon.IsNull(formData) || DiyCommon.IsNull(formData[field.Name]) ? null : formData[field.Name];
+                if (DiyCommon.IsNull(rawValue)) {
+                    return Number(config.Min || 0);
+                }
+                return Number(rawValue);
+            }
+        },
+        
+        // ==================== 单选下拉类组件 ====================
+        "Select": {
+            valueType: "dynamic", // 根据配置动态决定
+            defaultValue: "",
+            process: function(field, formData, ctx) {
+                var rawValue = DiyCommon.IsNull(formData) || DiyCommon.IsNull(formData[field.Name]) 
+                    ? "" : formData[field.Name];
+                if (DiyCommon.IsNull(rawValue)) {
+                    return "";
+                }
+                
+                // 普通数据源 Data：值就是字符串数组中的某一项（如 "齐套"），永远不要包装成对象
+                // 修复 bug：用户可能在 Data 源上误配置了 SelectLabel/SelectSaveField，
+                // 导致下面的"包装成对象"分支错误触发，使得 ModelValue 与 el-option 的 :value(string) 无法匹配
+                if (field.Config && field.Config.DataSource === "Data") {
+                    // 兼容历史脏数据：如果 rawValue 是对象（如 {Name:"齐套"}），按配置/常用键提取字符串
+                    if (rawValue && typeof rawValue === "object" && !Array.isArray(rawValue)) {
+                        var pickKeys = [field.Config.SelectSaveField, field.Config.SelectLabel,
+                            "Value", "value", "Name", "name", "Label", "label", "Text", "text"];
+                        for (var pi = 0; pi < pickKeys.length; pi++) {
+                            var pk = pickKeys[pi];
+                            if (pk && !DiyCommon.IsNull(rawValue[pk])) {
+                                return typeof rawValue[pk] === "string" ? rawValue[pk] : String(rawValue[pk]);
+                            }
+                        }
+                        // 找不到就返回空串，避免污染下游
+                        return "";
+                    }
+                    if (Array.isArray(rawValue)) {
+                        return rawValue.length > 0 ? String(rawValue[0]) : "";
+                    }
+                    return DiyCommon.IsNull(rawValue) ? "" : (typeof rawValue === "string" ? rawValue : String(rawValue));
+                }
+
+                // KeyValue 数据源：存储的是 Key字段的值，但V8访问时需要完整的 {Key, Value} 对象
+                if (field.Config && field.Config.DataSource === "KeyValue") {
+                    // 如果已经是对象，直接返回（标准化为Key/Value）
+                    if (rawValue && typeof rawValue === "object") {
+                        // 标准化为大驼峰 Key/Value
+                        if (rawValue.key !== undefined || rawValue.value !== undefined) {
+                            return {
+                                Key: rawValue.Key || rawValue.key || '',
+                                Value: rawValue.Value || rawValue.value || ''
+                            };
+                        }
+                        return rawValue;
+                    }
+                    // 如果是字符串（数据库存储的值），从field.Data中查找完整对象
+                    if (!DiyCommon.IsNull(rawValue) && field.Data && field.Data.length > 0) {
+                        // 兼容大小写：优先匹配 Key，其次 key
+                        var found = field.Data.find(function(item) { 
+                            return (item.Key || item.key) == rawValue; 
+                        });
+                        // 如果找到，返回标准化的对象
+                        if (found) {
+                            return {
+                                Key: found.Key || found.key || '',
+                                Value: found.Value || found.value || ''
+                            };
+                        }
+                    }
+                    return rawValue;
+                }
+                
+                // 有 SelectLabel 或 SelectSaveField 配置：数据是对象或需要转换为对象
+                if (!DiyCommon.IsNull(field.Config.SelectLabel) || !DiyCommon.IsNull(field.Config.SelectSaveField)) {
+                    var saveFieldForRawValue = field.Config.SelectSaveField || field.Config.SelectLabel;
+                    var rawFirstValue = null;
+                    if (Array.isArray(rawValue)) {
+                        rawFirstValue = rawValue.find(function(item) { return !DiyCommon.IsNull(item); });
+                    } else if (typeof rawValue === 'string') {
+                        var rawTrimmed = rawValue.trim();
+                        if (rawTrimmed.startsWith("[") && rawTrimmed.endsWith("]")) {
+                            try {
+                                var rawArray = JSON.parse(rawTrimmed);
+                                if (Array.isArray(rawArray)) {
+                                    rawFirstValue = rawArray.find(function(item) { return !DiyCommon.IsNull(item); });
+                                }
+                            } catch (e) { }
+                        }
+                    }
+                    if (!DiyCommon.IsNull(rawFirstValue)) {
+                        if (field.Data && field.Data.length > 0) {
+                            var rawFound = field.Data.find(function(item) {
+                                return item && item[saveFieldForRawValue] == rawFirstValue;
+                            });
+                            if (rawFound) return rawFound;
+                        }
+                        return rawFirstValue;
+                    }
+
+                    var jsonValue = DiyCommon.GetFieldJsonValue(field, formData, false);
+                    
+                    // 如果GetFieldJsonValue返回的是字符串（解析失败），尝试从field.Data中查找完整对象
+                    if (typeof jsonValue === 'string' && !DiyCommon.IsNull(jsonValue) && field.Data && field.Data.length > 0) {
+                        var saveField = field.Config.SelectSaveField || field.Config.SelectLabel;
+                        var found = field.Data.find(function(item) { 
+                            return item[saveField] == jsonValue; 
+                        });
+                        return found || jsonValue;
+                    }
+                    
+                    return jsonValue;
+                }
+                
+                // 普通字符串值
+                return rawValue;
+            },
+            postProcess: function(field, value, ctx) {
+                // 处理 Data 数据源回填（非 KeyValue 数据源）
+                if (field.Config && field.Config.DataSource !== "KeyValue" &&
+                    !DiyCommon.IsNull(value) && typeof value !== "string" && 
+                    JSON.stringify(value) !== "{}") {
+                    DiyCommon._fillFieldDataFromValue(field, [value], false);
+                }
+                return value;
+            },
+            getDefaultValue: function(field) {
+                return "";
+            }
+        },
+        "SelectTree": {
+            valueType: "dynamic",
+            defaultValue: "",
+            process: function(field, formData, ctx) {
+                var rawValue = DiyCommon.IsNull(formData) || DiyCommon.IsNull(formData[field.Name]) 
+                    ? "" : formData[field.Name];
+
+                var isMultiple = field.Config && field.Config.SelectTree && (
+                    field.Config.SelectTree.Multiple === true || field.Config.SelectTree.Multiple === "true" || field.Config.SelectTree.Multiple === 1 || field.Config.SelectTree.Multiple === "1"
+                );
+
+                if (isMultiple) {
+                    var jsonArr = DiyCommon.GetFieldJsonValue(field, formData, true);
+                    if (Array.isArray(jsonArr) && jsonArr.length > 0) {
+                        // 如果是字符串数组，尝试从树数据回填完整对象
+                        if (typeof jsonArr[0] === "string" && field.Data && field.Data.length > 0) {
+                            var saveFieldArr = field.Config.SelectSaveField || field.Config.SelectLabel || "Id";
+                            var childKeyArr = (field.Config.SelectTree && field.Config.SelectTree.Children) ? field.Config.SelectTree.Children : "_Child";
+                            return jsonArr.map(function(val) {
+                                var found = DiyCommon.ArrayDeepSearch(field.Data, childKeyArr, saveFieldArr, val);
+                                return found || val;
+                            });
+                        }
+                    }
+                    return jsonArr;
+                }
+
+                if (!DiyCommon.IsNull(field.Config.SelectLabel) || !DiyCommon.IsNull(field.Config.SelectSaveField)) {
+                    var jsonValue = DiyCommon.GetFieldJsonValue(field, formData, false);
+
+                    // 如果GetFieldJsonValue返回的是字符串（解析失败），尝试从field.Data中查找完整对象
+                    if (typeof jsonValue === 'string' && !DiyCommon.IsNull(jsonValue) && field.Data && field.Data.length > 0) {
+                        var saveField = field.Config.SelectSaveField || field.Config.SelectLabel || "Id";
+                        var childKey = (field.Config.SelectTree && field.Config.SelectTree.Children) ? field.Config.SelectTree.Children : "_Child";
+                        // SelectTree需要递归查找（支持树形结构）
+                        var found = DiyCommon.ArrayDeepSearch(field.Data, childKey, saveField, jsonValue);
+                        return found || jsonValue;
+                    }
+
+                    return jsonValue;
+                }
+                return rawValue;
+            },
+            getDefaultValue: function(field) {
+                var isMultiple = field.Config && field.Config.SelectTree && (
+                    field.Config.SelectTree.Multiple === true || field.Config.SelectTree.Multiple === "true" || field.Config.SelectTree.Multiple === 1 || field.Config.SelectTree.Multiple === "1"
+                );
+                if (isMultiple) return [];
+                if (!DiyCommon.IsNull(field.Config.SelectLabel) || !DiyCommon.IsNull(field.Config.SelectSaveField)) {
+                    return {};
+                }
+                return "";
+            }
+        },
+        "Radio": {
+            valueType: "string",
+            defaultValue: "",
+            process: function(field, formData, ctx) {
+                return DiyCommon.IsNull(formData) || DiyCommon.IsNull(formData[field.Name]) 
+                    ? "" : formData[field.Name];
+            }
+        },
+        
+        // ==================== 级联选择类组件 ====================
+        "Department": {
+            valueType: "dynamic",
+            defaultValue: [],
+            process: function(field, formData, ctx) {
+                if (field.Config.Department && field.Config.Department.EmitPath === false) {
+                    return !formData || !formData[field.Name] ? "" : formData[field.Name];
+                }
+                return DiyCommon.GetFieldJsonValue(field, formData, true);
+            },
+            getDefaultValue: function(field) {
+                if (field.Config.Department && field.Config.Department.EmitPath === false) {
+                    return "";
+                }
+                return [];
+            }
+        },
+        "Cascader": {
+            valueType: "dynamic",
+            defaultValue: [],
+            process: function(field, formData, ctx) {
+                if (field.Config.Cascader && field.Config.Cascader.EmitPath === false) {
+                    return !formData || !formData[field.Name] ? "" : formData[field.Name];
+                }
+                return DiyCommon.GetFieldJsonValue(field, formData, true);
+            },
+            getDefaultValue: function(field) {
+                if (field.Config.Cascader && field.Config.Cascader.EmitPath === false) {
+                    return "";
+                }
+                return [];
+            }
+        },
+        "Address": {
+            valueType: "array",
+            defaultValue: [],
+            process: function(field, formData, ctx) {
+                return DiyCommon.GetFieldJsonValue(field, formData, true);
+            }
+        },
+        
+        // ==================== 数字类组件 ====================
+        "NumberText": {
+            valueType: "number",
+            defaultValue: 0,
+            process: function(field, formData, ctx) {
+                return DiyCommon.IsNull(formData) || DiyCommon.IsNull(formData[field.Name]) 
+                    ? 0 : formData[field.Name];
+            }
+        },
+        "Rate": {
+            valueType: "number",
+            defaultValue: 0,
+            process: function(field, formData, ctx) {
+                return DiyCommon.IsNull(formData) || DiyCommon.IsNull(formData[field.Name]) 
+                    ? 0 : formData[field.Name];
+            }
+        },
+        "Switch": {
+            valueType: "number",
+            defaultValue: 0,
+            process: function(field, formData, ctx) {
+                return formData && formData[field.Name] ? 1 : 0;
+            }
+        },
+        
+        // ==================== 文件上传类组件 ====================
+        "ImgUpload": {
+            valueType: "dynamic",
+            defaultValue: "",
+            process: function(field, formData, ctx) {
+                var isMultiple = DiyCommon._isMultipleUpload(field, "ImgUpload");
+                if (isMultiple) {
+                    return DiyCommon.GetFieldJsonValue(field, formData, true) || [];
+                }
+                var imgValue = DiyCommon.IsNull(formData) || DiyCommon.IsNull(formData[field.Name]) 
+                    ? "" : formData[field.Name];
+                if (!imgValue || imgValue === '[]' || imgValue === '[ ]' || Array.isArray(imgValue)) {
+                    imgValue = "";
+                }
+                return imgValue;
+            },
+            getDefaultValue: function(field) {
+                return DiyCommon._isMultipleUpload(field, "ImgUpload") ? [] : "";
+            },
+            // 图片上传需要特殊的后处理来加载私有文件
+            postProcess: function(field, value, ctx) {
+                if (DiyCommon._isMultipleUpload(field, "ImgUpload") && Array.isArray(value) && ctx.loadPrivateFiles) {
+                    ctx.loadPrivateFiles(field, value, "ImgUpload");
+                }
+                return value;
+            }
+        },
+        "FileUpload": {
+            valueType: "dynamic",
+            defaultValue: "",
+            process: function(field, formData, ctx) {
+                var isMultiple = DiyCommon._isMultipleUpload(field, "FileUpload");
+                if (isMultiple) {
+                    return DiyCommon.GetFieldJsonValue(field, formData, true);
+                }
+                var fileValue = DiyCommon.IsNull(formData) || DiyCommon.IsNull(formData[field.Name]) 
+                    ? "" : formData[field.Name];
+                if (!fileValue || fileValue === '[]' || Array.isArray(fileValue)) {
+                    fileValue = "";
+                }
+                return fileValue;
+            },
+            getDefaultValue: function(field) {
+                return DiyCommon._isMultipleUpload(field, "FileUpload") ? [] : "";
+            }
+        },
+        
+        // ==================== 特殊组件（无值） ====================
+        "Divider": {
+            valueType: "none",
+            defaultValue: null,
+            process: function(field, formData, ctx) {
+                return null; // 分割线不需要值
+            }
+        },
+        "Button": {
+            valueType: "none",
+            defaultValue: null,
+            process: function(field, formData, ctx) {
+                return null; // 按钮不需要值
+            }
+        },
+        "CollapseGroup": {
+            valueType: "none",
+            defaultValue: null,
+            process: function(field, formData, ctx) {
+                return null; // 折叠分组不需要值
+            }
+        },
+        "Tabs": {
+            valueType: "none",
+            defaultValue: null,
+            process: function(field, formData, ctx) {
+                return null; // 页签分组不需要值
+            }
+        },
+        "Alert": {
+            valueType: "none",
+            defaultValue: null,
+            process: function(field, formData, ctx) {
+                return null; // 提示说明不需要值
+            }
+        },
+        "StaticText": {
+            valueType: "none",
+            defaultValue: null,
+            process: function(field, formData, ctx) {
+                return null; // 静态文本不需要值
+            }
+        },
+        
+        // ==================== 地图类组件 ====================
+        "Map": {
+            valueType: "object",
+            defaultValue: {},
+            process: function(field, formData, ctx) {
+                return DiyCommon.GetFieldJsonValue(field, formData, false);
+            }
+        },
+        "MapArea": {
+            valueType: "object",
+            defaultValue: {},
+            process: function(field, formData, ctx) {
+                return DiyCommon.GetFieldJsonValue(field, formData, false);
+            }
+        },
+        
+        // ==================== 默认处理器（文本类） ====================
+        "_default": {
+            valueType: "string",
+            defaultValue: "",
+            process: function(field, formData, ctx) {
+                return DiyCommon.IsNull(formData) || DiyCommon.IsNull(formData[field.Name]) 
+                    ? "" : formData[field.Name];
+            }
+        }
+    },
+    
+    /**
+     * 处理字段值 - 统一入口
+     * @param {Object} field - 字段配置对象
+     * @param {Object} formData - 表单数据
+     * @param {Object} ctx - 上下文对象，包含额外的处理函数和配置
+     * @returns {*} 处理后的值
+     */
+    ProcessFieldValue: function(field, formData, ctx) {
+        ctx = ctx || {};
+        var handler = DiyCommon.FieldValueHandlers[field.Component] || DiyCommon.FieldValueHandlers["_default"];
+        
+        try {
+            // 获取处理后的值
+            var value = handler.process(field, formData, ctx);
+            
+            // 执行后处理（如果有）
+            if (handler.postProcess) {
+                value = handler.postProcess(field, value, ctx);
+            }
+            
+            return value;
+        } catch (error) {
+            console.warn("ProcessFieldValue error for field:", field.Name, error);
+            // 返回默认值
+            if (handler.getDefaultValue) {
+                return handler.getDefaultValue(field);
+            }
+            return handler.defaultValue;
+        }
+    },
+    
+    /**
+     * 获取字段的默认值
+     * @param {Object} field - 字段配置对象
+     * @returns {*} 默认值
+     */
+    GetFieldDefaultValue: function(field) {
+        var handler = DiyCommon.FieldValueHandlers[field.Component] || DiyCommon.FieldValueHandlers["_default"];
+        if (handler.getDefaultValue) {
+            return handler.getDefaultValue(field);
+        }
+        return handler.defaultValue;
+    },
+    
+    /**
+     * 获取字段JSON值（内部方法）
+     * @param {Object} field - 字段配置对象
+     * @param {Object} formData - 表单数据
+     * @param {Boolean} isArray - 是否期望数组
+     * @returns {*} 解析后的值
+     */
+    GetFieldJsonValue: function(field, formData, isArray) {
+        if (DiyCommon.IsNull(formData) || DiyCommon.IsNull(formData[field.Name])) {
+            return isArray ? [] : {};
+        }
+        
+        var rawValue = formData[field.Name];
+        
+        // 如果已经是对象或数组，直接返回
+        if (typeof rawValue === "object") {
+            if (isArray) {
+                return Array.isArray(rawValue) ? rawValue : [];
+            }
+            return Array.isArray(rawValue) ? {} : rawValue;
+        }
+        
+        // 尝试 JSON 解析
+        try {
+            var parsed = JSON.parse(rawValue);
+            if (isArray) {
+                return Array.isArray(parsed) ? parsed : [];
+            }
+            return (typeof parsed === "object" && !Array.isArray(parsed)) ? parsed : {};
+        } catch (e) {
+            // JSON 解析失败，尝试构造对象
+            if (!isArray && (field.Component === "Select" || field.Component === "SelectTree")) {
+                if (!DiyCommon.IsNull(field.Config.SelectSaveField) || !DiyCommon.IsNull(field.Config.SelectLabel)) {
+                    var obj = {};
+                    if (!DiyCommon.IsNull(field.Config.SelectSaveField)) {
+                        obj[field.Config.SelectSaveField] = rawValue;
+                    }
+                    if (!DiyCommon.IsNull(field.Config.SelectLabel)) {
+                        obj[field.Config.SelectLabel] = rawValue;
+                    }
+                    return obj;
+                }
+            }
+            return isArray ? [] : {};
+        }
+    },
+    
+    /**
+     * 辅助方法：判断是否多文件上传
+     */
+    _isMultipleUpload: function(field, configKey) {
+        var cfg = field.Config && field.Config[configKey];
+        return cfg && (cfg.Multiple === true || cfg.Multiple === "true" || cfg.Multiple === 1 || cfg.Multiple === "1");
+    },
+    
+    /**
+     * 辅助方法：从值回填 field.Data
+     */
+    _fillFieldDataFromValue: function(field, values, isArray) {
+        if (DiyCommon.IsNull(field.Data) || field.Data == "[]" || 
+            field.Data.toString() == "" || JSON.stringify(field.Data) == "[{}]") {
+            var fieldData = [];
+            var fieldDataKey = !DiyCommon.IsNull(field.Config.SelectSaveField) 
+                ? field.Config.SelectSaveField : field.Config.SelectLabel;
+            
+            values.forEach(function(formValue) {
+                var isHave = false;
+                fieldData.forEach(function(fieldValue) {
+                    if (fieldValue[fieldDataKey] == formValue[fieldDataKey]) {
+                        isHave = true;
+                    }
+                });
+                if (!isHave && !DiyCommon.IsNull(formValue[fieldDataKey])) {
+                    fieldData.push(formValue);
+                }
+            });
+            
+            if (fieldData.length > 0) {
+                field.Data = fieldData;
+            }
+        }
+    },
+    
+    /**
+     * 注册新的字段值处理器
+     * @param {String} componentName - 组件名称
+     * @param {Object} handler - 处理器对象
+     */
+    RegisterFieldValueHandler: function(componentName, handler) {
+        DiyCommon.FieldValueHandlers[componentName] = handler;
+    },
+    
+    // ==================== 字段值处理器系统结束 ====================
+    
+    FieldDataCache: {},
+    /**
+     *
+     */
+    SetFieldData(field, isPostSql, apiReplace, formData) {
+        var self = this;
+        if (
+            field.Component == "Checkbox" ||
+            field.Component == "MultipleSelect" ||
+            field.Component == "Select" ||
+            field.Component == "Radio" ||
+            field.Component == "Autocomplete" ||
+            field.Component == "Cascader" ||
+            field.Component == "SelectTree"
+        ) {
+            // field.Data = [];
+            if (
+                (field.Config.DataSource == "Sql" && !DiyCommon.IsNull(field.Config.Sql)) ||
+                (field.Config.DataSource == "DataSource" && !DiyCommon.IsNull(field.Config.DataSourceId)) ||
+                (field.Config.DataSource == "ApiEngine" && !DiyCommon.IsNull(field.Config.DataSourceApiEngineKey)) ||
+                (field.Config.DataSource == "Api" && !DiyCommon.IsNull(field.Config.Api))
+            ) {
+                //!DiyCommon.IsNull(field.Config.Sql)
+                if (isPostSql !== false) {
+                    // 防止 SetFieldData(单字段) 与 SetFieldsData(批量) 并发重复请求
+                    if (field._DataLoading === true) {
+                        return;
+                    }
+                    field._DataLoading = true;
+                    var apiGetDiyFieldSqlData = DiyApi.GetDiyFieldSqlData;
+                    if (!DiyCommon.IsNull(apiReplace) && !DiyCommon.IsNull(apiReplace.GetDiyFieldSqlData)) {
+                        apiGetDiyFieldSqlData = apiReplace.GetDiyFieldSqlData;
+                    }
+                    var param = {
+                        _FieldId: field.Id,
+                        //OsClient: DiyCommon.GetOsClient(),
+                        _FormData: formData
+                    };
+                    if (field.Config.DataSource == "Api") {
+                        apiGetDiyFieldSqlData = field.Config.Api;
+                    } else if (field.Config.DataSource == "DataSource") {
+                        apiGetDiyFieldSqlData = DiyApi.GetDataSourceEngine;
+                    } else if (field.Config.DataSource == "ApiEngine") {
+                        apiGetDiyFieldSqlData = DiyApi.ApiEngineRun;
+                    }
+                    // 查询数据库
+                    DiyCommon.Post(apiGetDiyFieldSqlData, param, function (result) {
+                        field._DataLoading = false;
+                        if (DiyCommon.Result(result)) {
+                            try {
+                                if (DiyCommon.IsNull(result.Data)) {
+                                    result.Data = [];
+                                }
+                                //这里要把设置的默认值加进入，不然开启了limit远程搜索后，不显示值
+                                //注意这里的逻辑和DiyForm的SelectRemoteMethod逻辑类似 ，如果这里修改，那边需要同步
+                                //2020-12-30发现问题： field.Data.length == 1只考虑到了单选，没有考虑到多选。
+                                if (!DiyCommon.IsNull(field.Data) && field.Data.length > 0) {
+                                    //&& field.Data.length == 1
+                                    // var tempData = field.Data[0];
+                                    var fieldDataKey = !DiyCommon.IsNull(field.Config.SelectSaveField) ? field.Config.SelectSaveField : field.Config.SelectLabel;
+                                    // var fieldDataKeyValue = tempData[fieldDataKey];
+                                    field.Data.forEach((element) => {
+                                        var isHave = false;
+                                        //2022-05-20：如果这个下拉控件配置了不同的显示字段和保存字段，这下面在push的时候，其实也要考虑到这2者，后来在GetFormDataJsonValue这里处理
+                                        var fieldDataKeyValue = element[fieldDataKey];
+                                        if (!DiyCommon.IsNull(fieldDataKey) && !DiyCommon.IsNull(fieldDataKeyValue)) {
+                                            //先看下取的第一页数据是否已经包含了默认值，如果已经包含了就不需要再push了
+                                            result.Data.forEach((resultDataRow) => {
+                                                if (resultDataRow[fieldDataKey] == fieldDataKeyValue) {
+                                                    isHave = true;
+                                                }
+                                            });
+                                        }
+                                        //2020-12-30新增 && !DiyCommon.IsNull(fieldDataKeyValue) 不能将空值插入进去
+                                        if (!isHave && !DiyCommon.IsNull(fieldDataKeyValue)) {
+                                            // result.Data.push(field.Data[0]);
+                                            result.Data.push(element);
+                                        }
+                                    });
+                                }
+                            } catch (error) {}
+                            field.Data = result.Data;
+                        }
+                    });
+                }
+            }
+        } else if (field.Component == "Department") {
+            // if(!DiyCommon.IsNull(DiyCommon.FieldDataCache.GetSysDeptStep)){
+            //     field.Data = DiyCommon.FieldDataCache.GetSysDeptStep;
+            // }else{
+            DiyCommon.Post(
+                DiyApi.GetSysDeptStep,
+                // '/api/FormEngine/GetTableDatatree',
+                {
+                    FormEngineKey: "Sys_Dept"
+                },
+                function (result) {
+                    if (DiyCommon.Result(result)) {
+                        result.Data.forEach((element) => {
+                            element.disabled = false;
+                        });
+                        DiyCommon.FieldDataCache.GetSysDeptStep = result.Data;
+                        field.Data = result.Data;
+                    }
+                }
+            );
+            // }
+        }
+    },
+    /**
+     * 初始化字段的必要属性，确保字段对象具有正确的默认值
+     * @param {Object} field - 字段对象
+     * @param {Object} formModel - 表单数据模型（可选）
+     * @param {Function} $set - Vue 的 $set 方法（用于响应式更新，可选）
+     */
+    EnsureFieldProperties(field, formModel, $set) {
+        if (!field) return;
+
+        // 确保 field.Data 已初始化（避免 undefined.length 错误）
+        if (field.Data === undefined) {
+            field.Data = [];
+        }
+
+        // 确保 field.Config 已初始化
+        if (!field.Config) {
+            field.Config = {};
+        }
+
+        // 如果提供了 formModel，根据组件类型确保值的类型正确
+        if (formModel && field.Name) {
+            var currentValue = formModel[field.Name];
+            var expectedType = this.GetFieldExpectedValueType(field);
+
+            // 根据期望的类型初始化值
+            if (expectedType === "array" && !Array.isArray(currentValue)) {
+                // 仅在当前值显然为空或无效时初始化为空数组，避免覆盖已有有效值（例如单文件的字符串路径）
+                var shouldInitArray = false;
+                try {
+                    if (currentValue === undefined || currentValue === null) {
+                        shouldInitArray = true;
+                    } else if (typeof currentValue === "string") {
+                        var t = currentValue.trim();
+                        if (t === "" || t === "[]" || t === "[ ]" || t === "null" || t === "undefined") {
+                            shouldInitArray = true;
+                        }
+                    } else if (typeof currentValue === "object") {
+                        // 如果是空对象，认为无有效值，可以初始化为数组（兼容某些后端异常存储）
+                        if (!Array.isArray(currentValue) && Object.keys(currentValue).length === 0) {
+                            shouldInitArray = true;
+                        }
+                    }
+                } catch (e) {
+                    shouldInitArray = true;
+                }
+
+                if (shouldInitArray) {
+                    var newValue = [];
+                    formModel[field.Name] = newValue;
+                }
+            } else if (expectedType === "object" && (typeof currentValue !== "object" || Array.isArray(currentValue) || currentValue === null)) {
+                // 仅在当前值显然为空或无效时初始化为空对象，避免覆盖已有有效字符串（例如 JSON 字符串）
+                var shouldInitObject = false;
+                try {
+                    if (currentValue === undefined || currentValue === null) {
+                        shouldInitObject = true;
+                    } else if (typeof currentValue === "string") {
+                        var t2 = currentValue.trim();
+                        if (t2 === "" || t2 === "{}" || t2 === "null" || t2 === "undefined") {
+                            shouldInitObject = true;
+                        }
+                    }
+                } catch (e) {
+                    shouldInitObject = true;
+                }
+
+                if (shouldInitObject) {
+                    var newValue = {};
+                    formModel[field.Name] = newValue;
+                }
+            }
+        }
+    },
+    /**
+     * 获取字段组件期望的值类型
+     * @param {Object|String} fieldOrComponent - 字段对象或组件类型字符串
+     * @returns {String} - 'array', 'object' 或 null
+     */
+    GetFieldExpectedValueType(fieldOrComponent) {
+        var component = typeof fieldOrComponent === "string" ? fieldOrComponent : fieldOrComponent.Component;
+        var field = typeof fieldOrComponent === "object" ? fieldOrComponent : null;
+
+        // 常规需要数组类型的组件
+        var arrayComponents = ["Checkbox", "MultipleSelect", "TagInput", "Transfer"];
+        if (arrayComponents.indexOf(component) > -1) {
+            return "array";
+        }
+
+        if (component === "Slider") {
+            if (field && field.Config && field.Config.Slider && field.Config.Slider.Range === true) {
+                return "array";
+            }
+            return null;
+        }
+
+        // ImgUpload 和 FileUpload：只有在配置了 Multiple 时才期望数组
+        if (component === "ImgUpload" || component === "FileUpload") {
+            try {
+                var cfg = null;
+                if (field && field.Config) {
+                    cfg = component === "ImgUpload" ? field.Config.ImgUpload : field.Config.FileUpload;
+                }
+                if (cfg) {
+                    var m = cfg.Multiple;
+                    if (m === true || m === "true" || m === 1 || m === "1") {
+                        return "array";
+                    }
+                }
+            } catch (e) {}
+            return null;
+        }
+
+        // Select/SelectTree/Cascader 等组件需要检查是否多选
+        if (component === "Select") {
+            // 检查是否有 Config.Multiple 或 Config.SelectMultiple 配置
+            if (field && field.Config && (field.Config.Multiple === true || field.Config.SelectMultiple === true)) {
+                return "array";
+            }
+            return "object";
+        }
+
+        if (component === "SelectTree") {
+            // SelectTree 的多选配置在 Config.SelectTree.Multiple
+            if (field && field.Config && field.Config.SelectTree && field.Config.SelectTree.Multiple === true) {
+                return "array";
+            }
+            return "object";
+        }
+
+        if (component === "Cascader") {
+            // Cascader 的多选配置在 Config.Cascader.Multiple
+            if (field && field.Config && field.Config.Cascader && field.Config.Cascader.Multiple === true) {
+                return "array";
+            }
+            return "object";
+        }
+
+        // 其他需要对象类型的组件
+        var objectComponents = ["Map", "MapArea"];
+        if (objectComponents.indexOf(component) > -1) {
+            return "object";
+        }
+
+        return null;
+    },
+    SetFieldsData(fields, formData) {
+        var self = this;
+
+        //提前定义查询数据库的方法
+        function GetFieldsData() {
+            // 标记所有待加载字段为加载中，防止子组件并发请求
+            fieldList.forEach((f) => { f._DataLoading = true; });
+            // 查询数据库
+            DiyCommon.Post(apiGetFieldsData, param, function (results) {
+                fieldList.forEach((f) => { f._DataLoading = false; });
+                if (results.Code == 1) {
+                    fieldList.forEach((field) => {
+                        var resultModel = _.find(results.Data, function (item) {
+                            return item.FieldId == field.Id;
+                        });
+                        if (!resultModel) {
+                            return; //相当于continue.
+                        }
+                        var result = resultModel.Result;
+                        if (DiyCommon.IsNull(result.Data)) {
+                            result.Data = [];
+                        }
+                        try {
+                            //这里要把设置的默认值加进入，不然开启了limit远程搜索后，不显示值
+                            //注意这里的逻辑和DiyForm的SelectRemoteMethod逻辑类似 ，如果这里修改，那边需要同步
+                            //2020-12-30发现问题： field.Data.length == 1只考虑到了单选，没有考虑到多选。
+                            if (!DiyCommon.IsNull(field.Data) && field.Data.length > 0) {
+                                var fieldDataKey = !DiyCommon.IsNull(field.Config.SelectSaveField) ? field.Config.SelectSaveField : field.Config.SelectLabel;
+                                field.Data.forEach((element) => {
+                                    var isHave = false;
+                                    //2022-05-20：如果这个下拉控件配置了不同的显示字段和保存字段，这下面在push的时候，其实也要考虑到这2者，后来在GetFormDataJsonValue这里处理
+                                    var fieldDataKeyValue = element[fieldDataKey];
+                                    if (!DiyCommon.IsNull(fieldDataKey) && !DiyCommon.IsNull(fieldDataKeyValue)) {
+                                        //先看下取的第一页数据是否已经包含了默认值，如果已经包含了就不需要再push了
+                                        result.Data.forEach((resultDataRow) => {
+                                            if (resultDataRow[fieldDataKey] == fieldDataKeyValue) {
+                                                isHave = true;
+                                            }
+                                        });
+                                    }
+                                    //2020-12-30新增 && !DiyCommon.IsNull(fieldDataKeyValue) 不能将空值插入进去
+                                    if (!isHave && !DiyCommon.IsNull(fieldDataKeyValue)) {
+                                        result.Data.push(element);
+                                    }
+                                });
+                            }
+                        } catch (error) {}
+                        field.Data = result.Data;
+                    });
+                } else {
+                    var fieldsMsg = "";
+                    try {
+                        fieldsMsg = JSON.stringify(param.FieldNames);
+                    } catch (error) {}
+                    DiyCommon.Tips(results.Msg + "<br>相关字段：" + fieldsMsg, false);
+                }
+            });
+        }
+
+        //先组装一次性查询数据库需要的参数
+        var fieldList = [];
+        fields.forEach((field) => {
+            if (
+                field.Component == "Checkbox" ||
+                field.Component == "MultipleSelect" ||
+                field.Component == "Select" ||
+                field.Component == "Radio" ||
+                field.Component == "Autocomplete" ||
+                field.Component == "Cascader" ||
+                field.Component == "SelectTree"
+            ) {
+                // 🔥 Key-Value 数据源不需要从服务器加载数据，数据已经存储在 field.Data 中
+                if (field.Config.DataSource == "KeyValue" || field.Config.DataSource == "Data") {
+                    // KeyValue 和 Data 类型的数据已经存在于 field.Data 中，不需要加载
+                    return;
+                }
+                if (
+                    (field.Config.DataSource == "Sql" && !DiyCommon.IsNull(field.Config.Sql)) ||
+                    (field.Config.DataSource == "Api" && !DiyCommon.IsNull(field.Config.Api)) ||
+                    (field.Config.DataSource == "DataSource" && !DiyCommon.IsNull(field.Config.DataSourceId)) ||
+                    (field.Config.DataSource == "ApiEngine" && !DiyCommon.IsNull(field.Config.DataSourceApiEngineKey))
+                ) {
+                    if (field.Config.DataSource == "Api" || field.Config.DataSource == "DataSource" || field.Config.DataSource == "ApiEngine") {
+                        // 标记为加载中，防止子组件 SetFieldData 再次发起重复请求
+                        field._DataLoading = true;
+                        var param = {
+                            _FormData: formData
+                        };
+                        var apiGetFieldsData = field.Config.Api;
+                        if (field.Config.DataSource == "DataSource") {
+                            apiGetFieldsData = DiyApi.GetDataSourceEngine;
+                            param.DataSourceKey = field.Config.DataSourceId;
+                        } else if (field.Config.DataSource == "ApiEngine") {
+                            apiGetFieldsData = DiyApi.ApiEngineRun;
+                            param.ApiEngineKey = field.Config.DataSourceApiEngineKey;
+                        }
+                        // 查询数据库
+                        // GetFieldsData();
+
+                        DiyCommon.Post(apiGetFieldsData, param, function (result) {
+                            field._DataLoading = false;
+                            if (DiyCommon.Result(result)) {
+                                try {
+                                    if (DiyCommon.IsNull(result.Data)) {
+                                        result.Data = [];
+                                    }
+                                    //这里要把设置的默认值加进入，不然开启了limit远程搜索后，不显示值
+                                    //注意这里的逻辑和DiyForm的SelectRemoteMethod逻辑类似 ，如果这里修改，那边需要同步
+                                    //2020-12-30发现问题： field.Data.length == 1只考虑到了单选，没有考虑到多选。
+                                    if (!DiyCommon.IsNull(field.Data) && field.Data.length > 0) {
+                                        var fieldDataKey = !DiyCommon.IsNull(field.Config.SelectSaveField) ? field.Config.SelectSaveField : field.Config.SelectLabel;
+                                        field.Data.forEach((element) => {
+                                            var isHave = false;
+                                            //2022-05-20：如果这个下拉控件配置了不同的显示字段和保存字段，这下面在push的时候，其实也要考虑到这2者，后来在GetFormDataJsonValue这里处理
+                                            var fieldDataKeyValue = element[fieldDataKey];
+                                            if (!DiyCommon.IsNull(fieldDataKey) && !DiyCommon.IsNull(fieldDataKeyValue)) {
+                                                //先看下取的第一页数据是否已经包含了默认值，如果已经包含了就不需要再push了
+                                                result.Data.forEach((resultDataRow) => {
+                                                    if (resultDataRow[fieldDataKey] == fieldDataKeyValue) {
+                                                        isHave = true;
+                                                    }
+                                                });
+                                            }
+                                            //2020-12-30新增 && !DiyCommon.IsNull(fieldDataKeyValue) 不能将空值插入进去
+                                            if (!isHave && !DiyCommon.IsNull(fieldDataKeyValue)) {
+                                                result.Data.push(element);
+                                            }
+                                        });
+                                    }
+                                } catch (error) {}
+                                field.Data = result.Data;
+                            }
+                        });
+                    } else {
+                        //先组装一次性查询数据库需要的参数
+                        fieldList.push(field);
+                    }
+                }
+            } else if (field.Component == "Department") {
+                DiyCommon.Post(
+                    DiyApi.GetSysDeptStep,
+                    // '/api/FormEngine/GetTableDatatree',
+                    {
+                        FormEngineKey: "Sys_Dept"
+                    },
+                    function (result) {
+                        if (DiyCommon.Result(result)) {
+                            result.Data.forEach((element) => {
+                                element.disabled = false;
+                            });
+                            DiyCommon.FieldDataCache.GetSysDeptStep = result.Data;
+                            field.Data = result.Data;
+                        }
+                    }
+                );
+            }
+        });
+        //一次性获取所有字段的数据源
+        if (fieldList.length > 0) {
+            var apiGetFieldsData = DiyApi.GetFieldsData;
+            var param = {
+                FieldIds: _.pluck(fieldList, "Id"),
+                FieldNames: _.pluck(fieldList, "Name"),
+                _FormData: formData
+            };
+            GetFieldsData();
+        }
+    },
+    FindRecursion(arr, childName, idValue) {
+        // _.where(self.SysMenuList, { Id : model.ParentId});
+        var result = undefined;
+        // _.find(arr, function(item){
+        //     if (item.Id == idValue) {
+        //         result = item;
+        //         return true;
+        //     }
+        //     else if (!DiyCommon.IsNull(item[childName]) && item[childName].length > 0) {
+        //         return DiyCommon.FindRecursion(item[childName], childName, idValue) != undefined;
+        //     }
+        // });
+        for (let index = 0; index < arr.length; index++) {
+            const item = arr[index];
+            if (item.Id == idValue) {
+                result = item;
+                break;
+            } else if (!DiyCommon.IsNull(item[childName]) && item[childName].length > 0) {
+                //递归
+                var tempResult = DiyCommon.FindRecursion(item[childName], childName, idValue);
+                if (tempResult != undefined) {
+                    result = tempResult;
+                    break;
+                }
+            }
+        }
+        return result;
+    },
+    //传入数组、子数据名称、要搜索的主建名称、要搜索的主键值
+    //用法：self.DiyCommon.ArrayDeepSearch(arr, '_Child', 'Id', 'Id值')
+    ArrayDeepSearch(arr, childName, idKey, idValue) {
+        var result = undefined;
+        for (let index = 0; index < arr.length; index++) {
+            const item = arr[index];
+            if (item[idKey] == idValue) {
+                result = item;
+                break;
+            } else if (!DiyCommon.IsNull(item[childName]) && item[childName].length > 0) {
+                //递归
+                var tempResult = DiyCommon.ArrayDeepSearch(item[childName], childName, idKey, idValue);
+                if (tempResult != undefined) {
+                    result = tempResult;
+                    break;
+                }
+            }
+        }
+        return result;
+    },
+    //向数据库存数据前，会调用此方法
+    ForRowModelHandler(formDiyTableModel, diyFieldList) {
+        for (const formField in formDiyTableModel) {
+            // console.log(key + '---' + obj[key])
+            try {
+                // 这里要注意，Map字段是否搜索的到？其实搜索的到
+                var fieldModelSearch = _.where(diyFieldList, {
+                    Name: formField
+                });
+                if (!DiyCommon.IsNull(fieldModelSearch) && fieldModelSearch.length > 0) {
+                    var fieldModel = fieldModelSearch[0];
+                    //如果是下拉单选，有可能是存Json、也可能是存字段
+                    if (
+                        fieldModel.Component == "Select" ||
+                        fieldModel.Component == "SelectTree" //2022-07-01新增下拉树同样的处理
+                    ) {
+                        var selectVal = formDiyTableModel[formField];
+                        // 多选场景：保持对象数组，或按存储字段提取值数组
+                        if (Array.isArray(selectVal)) {
+                            if (!DiyCommon.IsNull(fieldModel.Config.SelectSaveField)) {
+                                if (fieldModel.Config.SelectSaveFormat !== "Json") {
+                                    var saveField = fieldModel.Config.SelectSaveField;
+                                    formDiyTableModel[formField] = selectVal.map(function(item) {
+                                        return item ? item[saveField] : item;
+                                    });
+                                }
+                            }
+                            continue;
+                        }
+                        // 优先处理 KeyValue 数据源：值是 {Key: xxx, Value: xxx} 对象，存储 Key 字段的值
+                        if (fieldModel.Config && fieldModel.Config.DataSource === "KeyValue") {
+                            var val = formDiyTableModel[formField];
+                            if (val && typeof val === "object") {
+                                // 兼容大小写：优先使用 Key，其次 key
+                                var keyValue = val.Key !== undefined ? val.Key : val.key;
+                                if (keyValue !== undefined) {
+                                    formDiyTableModel[formField] = keyValue;
+                                }
+                            }
+                            // 如果已经是字符串，则不需要处理
+                            continue;
+                        }
+                        //如果设置了显示对应字段或存储对应字段，那就应该需要配置是存Json还是字段，没设置显示对应字段，就直接存值，什么都不做
+                        if (!DiyCommon.IsNull(fieldModel.Config.SelectLabel) || !DiyCommon.IsNull(fieldModel.Config.SelectSaveField)) {
+                            //如果是存字段，则直接string的值
+                            if (fieldModel.Config.SelectSaveFormat !== "Json") {
+                                //fieldModel.Config.SelectSaveFormat == 'Text'
+                                //如果配置了存储对应字段
+                                if (!DiyCommon.IsNull(fieldModel.Config.SelectSaveField)) {
+                                    //2022-09-02：下拉框可能已經清除了值，不能獲取一個undefined，否則不會傳入到後端
+                                    if (formDiyTableModel[formField]) {
+                                        formDiyTableModel[formField] = formDiyTableModel[formField][fieldModel.Config.SelectSaveField];
+                                    }
+                                }
+                                //没配置存储对应字段，就存显示对应字段
+                                else {
+                                    if (formDiyTableModel[formField]) {
+                                        formDiyTableModel[formField] = formDiyTableModel[formField][fieldModel.Config.SelectLabel];
+                                    }
+                                }
+                            }
+                            //如果是存Json，什么都不用做，因为formDiyTableModel[formField]就已经是对象{}了
+                            else if (fieldModel.Config.SelectSaveFormat == "Json") {
+                                // --- 2020-10-30  不再判断   直接存储所有查询出来的字段
+                                //这里需要判断是单选还是多选
+                                // if (fieldModel.Component == 'MultipleSelect') {
+                                // }else{
+                                //     var tempObj = {
+                                //         Id: formDiyTableModel[formField].Id
+                                //     }
+                                //     if (!DiyCommon.IsNull(formDiyTableModel[formField].Key)) {
+                                //         tempObj.Key = formDiyTableModel[formField].Key
+                                //     }
+                                //     tempObj[fieldModel.Config.SelectLabel] = formDiyTableModel[formField][fieldModel.Config.SelectLabel]
+                                //     formDiyTableModel[formField] = tempObj
+                                // }
+                                // --- 2020-10-30 直接存储所有查询出来的字段
+                                //注意：下拉多选、多选框，不能存储所有字段，只能存储SelectSaveField，否则查询数据时无法选中
+                                //后来发现，formDiyTableModel[formField]就是这样存储的
+                                // if(fieldModel.Component == 'Checkbox' || fieldModel.Component == 'MultipleSelect'){
+                                //     if(!DiyCommon.IsNull(fieldModel.Config.SelectSaveField)){
+                                //         var tempValues = [];
+                                //         formDiyTableModel[formField].forEach(element => {
+                                //             tempValues.push(formDiyTableModel[formField][fieldModel.Config.SelectSaveField]);
+                                //         });
+                                //         formDiyTableModel[formField] = tempValues;
+                                //     }
+                                // }
+                                // else if(fieldModel.Component == 'Radio' || fieldModel.Component == 'Select'){
+                                //     if(!DiyCommon.IsNull(fieldModel.Config.SelectSaveField)){
+                                //         var tempValues = [];
+                                //         formDiyTableModel[formField].forEach(element => {
+                                //             tempValues.push(formDiyTableModel[formField][fieldModel.Config.SelectSaveField]);
+                                //         });
+                                //         formDiyTableModel[formField] = tempValues;
+                                //     }
+                                // }
+                            }
+                        }
+                    }
+                    // 处理多选组件（MultipleSelect、Checkbox）的 KeyValue 数据源
+                    else if (
+                        fieldModel.Component == "MultipleSelect" ||
+                        fieldModel.Component == "Checkbox"
+                    ) {
+                        // 处理 KeyValue 数据源：值是 [{Key: xxx, Value: xxx}, ...] 数组，存储 Key 数组
+                        if (fieldModel.Config && fieldModel.Config.DataSource === "KeyValue") {
+                            var val = formDiyTableModel[formField];
+                            if (Array.isArray(val) && val.length > 0) {
+                                // 检查第一个元素是否是对象
+                                if (typeof val[0] === "object") {
+                                    var keyArray = val.map(function(item) {
+                                        // 兼容大小写：优先使用 Key，其次 key
+                                        return item.Key !== undefined ? item.Key : item.key;
+                                    });
+                                    formDiyTableModel[formField] = keyArray;
+                                }
+                            }
+                            // 如果已经是字符串数组，则不需要处理
+                            continue;
+                        }
+                        
+                        // 处理 SelectSaveField 配置：从对象数组提取指定字段值的数组
+                        // 多选未配置存储字段时，保持对象数组（即使配置了显示字段）
+                        if (!DiyCommon.IsNull(fieldModel.Config.SelectSaveField)) {
+                            // 如果是存字段（非 Json）
+                            if (fieldModel.Config.SelectSaveFormat !== "Json") {
+                                var val = formDiyTableModel[formField];
+                                if (Array.isArray(val) && val.length > 0 && typeof val[0] === "object") {
+                                    var saveField = fieldModel.Config.SelectSaveField;
+                                    var fieldArray = val.map(function(item) {
+                                        return item[saveField];
+                                    });
+                                    formDiyTableModel[formField] = fieldArray;
+                                }
+                            }
+                            // 如果是存 Json，保持对象数组不变
+                        }
+                    }
+                    // 处理单图/单文件控件：确保保存的是 JSON 字符串格式
+                    else if (fieldModel.Component == "ImgUpload" || fieldModel.Component == "FileUpload") {
+                        try {
+                            var cfg = fieldModel.Config && (fieldModel.Component == "ImgUpload" ? fieldModel.Config.ImgUpload : fieldModel.Config.FileUpload);
+                            var isMultiple = cfg && (cfg.Multiple === true || cfg.Multiple === "true");
+                            // 仅处理单文件/单图场景
+                            if (!isMultiple) {
+                                var val = formDiyTableModel[formField];
+                                
+                                // 如果值为空或正在上传中，设置为空字符串
+                                if (DiyCommon.IsNull(val) || val === '正在上传中...') {
+                                    formDiyTableModel[formField] = '';
+                                }
+                                // 如果已经是 JSON 字符串格式（正确格式），保持不变
+                                else if (typeof val === "string" && val.startsWith('{')) {
+                                    var _validJson = false;
+                                    try {
+                                        JSON.parse(val);
+                                        _validJson = true;
+                                    } catch (e) { /* JSON 解析失败，继续后续处理 */ }
+                                    
+                                    if (!_validJson) {
+                                        // 不是有效JSON，当作普通字符串路径处理
+                                        var fileName = val.split('/').pop();
+                                        var jsonObj = {
+                                            Id: 'legacy_' + new Date().getTime(),
+                                            Name: fileName,
+                                            Size: '',
+                                            CreateTime: '',
+                                            Path: val,
+                                            State: 1
+                                        };
+                                        formDiyTableModel[formField] = JSON.stringify(jsonObj);
+                                    }
+                                }
+                                // 如果是对象（新上传的文件），序列化为 JSON 字符串
+                                else if (typeof val === "object" && val !== null && !Array.isArray(val)) {
+                                    if (val.Path || val.path || val.Url || val.url) {
+                                        var jsonObj = {
+                                            Id: val.Id || val.id || '',
+                                            Name: val.Name || val.name || '',
+                                            Size: val.Size || val.size || '',
+                                            CreateTime: val.CreateTime || val.createTime || '',
+                                            Path: val.Path || val.path || val.Url || val.url || '',
+                                            State: val.State !== undefined ? val.State : 1
+                                        };
+                                        formDiyTableModel[formField] = JSON.stringify(jsonObj);
+                                    }
+                                }
+                                // 如果是数组，取第一个元素并处理
+                                else if (Array.isArray(val)) {
+                                    if (val.length === 0) {
+                                        formDiyTableModel[formField] = "";
+                                    } else {
+                                        var first = val[0];
+                                        if (typeof first === "object" && first !== null) {
+                                            var jsonObj = {
+                                                Id: first.Id || first.id || '',
+                                                Name: first.Name || first.name || '',
+                                                Size: first.Size || first.size || '',
+                                                CreateTime: first.CreateTime || first.createTime || '',
+                                                Path: first.Path || first.path || first.Url || first.url || '',
+                                                State: first.State !== undefined ? first.State : 1
+                                            };
+                                            formDiyTableModel[formField] = JSON.stringify(jsonObj);
+                                        } else if (typeof first === "string") {
+                                            var fileName = first.split('/').pop();
+                                            var jsonObj = {
+                                                Id: 'legacy_' + new Date().getTime(),
+                                                Name: fileName,
+                                                Size: '',
+                                                CreateTime: '',
+                                                Path: first,
+                                                State: 1
+                                            };
+                                            formDiyTableModel[formField] = JSON.stringify(jsonObj);
+                                        }
+                                    }
+                                }
+                                // 如果是普通字符串路径（老数据格式），包装成 JSON 对象
+                                else if (typeof val === "string" && val.trim() !== "") {
+                                    var fileName = val.split('/').pop();
+                                    var jsonObj = {
+                                        Id: 'legacy_' + new Date().getTime(),
+                                        Name: fileName,
+                                        Size: '',
+                                        CreateTime: '',
+                                        Path: val,
+                                        State: 1
+                                    };
+                                    formDiyTableModel[formField] = JSON.stringify(jsonObj);
+                                }
+                            }
+                            // 多文件场景：保持数组格式不变，不需要处理 RealPath（RealPath 只用于前端显示）
+                            // 数组中的每个对象应该保持 {Id, Name, Size, CreateTime, Path, State} 格式
+
+                            // 处理「保存为完整路径」配置：将相对路径转换为完整URL
+                            if (cfg && cfg.SaveFullPath === true) {
+                                var fileServer = DiyCommon.GetFileServer();
+                                var currentVal = formDiyTableModel[formField];
+                                if (!DiyCommon.IsNull(currentVal)) {
+                                    if (!isMultiple) {
+                                        // 单文件：解析JSON字符串，修改Path后重新序列化
+                                        if (typeof currentVal === "string" && currentVal.startsWith('{')) {
+                                            try {
+                                                var parsed = JSON.parse(currentVal);
+                                                if (parsed.Path && !parsed.Path.toLowerCase().startsWith("http")) {
+                                                    parsed.Path = fileServer + parsed.Path;
+                                                    formDiyTableModel[formField] = JSON.stringify(parsed);
+                                                }
+                                            } catch (e) { /* ignore */ }
+                                        }
+                                    } else {
+                                        // 多文件：遍历数组中的每个对象，修改Path
+                                        if (Array.isArray(currentVal)) {
+                                            currentVal.forEach(function(item) {
+                                                if (item && item.Path && !item.Path.toLowerCase().startsWith("http")) {
+                                                    item.Path = fileServer + item.Path;
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e) {
+                            // 容错：不要阻塞其它字段处理
+                            console.log("ForRowModelHandler - 处理单图/单文件字段出错:", formField, e);
+                        }
+                    }
+                    // 这里要判断是否是Map类型，需要写2个字段值?
+                    else if (fieldModel.Component == "Map") {
+                        // formDiyTableModel[formField] = tempObj;
+                    }
+                }
+            } catch (error) {
+                console.log(error);
+            }
+        }
+    },
+    ForConvertSysMenu(data) {
+        // data.Display = data.Display ? true : false;
+        // data.InTableEdit = data.InTableEdit ? true : false;
+        // data.IsMicroiService = data.IsMicroiService ? true : false;
+
+        DiyCommon.SysMenuNeedConvertField.forEach((convertField) => {
+            if (DiyCommon.IsNull(data[convertField])) {
+                data[convertField] = [];
+            } else if (typeof data[convertField] == "string") {
+                if (convertField == "StatisticsFields") {
+                    var tempResult = [];
+                    var tempArr = JSON.parse(data[convertField]);
+                    tempArr.forEach((calcIdType) => {
+                        tempResult.push(calcIdType.Id);
+                    });
+                    data[convertField] = tempResult;
+                } else if (convertField == "SearchFieldIds") {
+                    //转换之前，先改造下 SearchFieldIds,从List<Guid>变为  List<{Id:'',TableId:'',TableName:'',DisplayType:'显示模式',DisplaySelect:'是否显示为下拉框',}>
+                    if (!DiyCommon.IsNull(data[convertField])) {
+                        try {
+                            data[convertField] = JSON.parse(data[convertField]);
+                        } catch (error) {
+                            data[convertField] = [];
+                        }
+                        if (data[convertField].length > 0 && typeof data[convertField][0] == "string") {
+                            var index = 0;
+                            data[convertField].forEach((fieldId) => {
+                                // var fieldModel = _.where(self.DiyFieldList, { Id : fieldId })[0];
+                                // if (fieldModel) {
+                                var newFieldModel = {
+                                    Id: fieldId,
+                                    Name: "", //fieldModel.Name,
+                                    Label: "", //fieldModel.Label,
+                                    AsName: "",
+                                    TableId: "", //fieldModel.TableId,
+                                    TableName: "", //fieldModel.TableName,
+                                    TableDescription: "", //fieldModel.TableDescription,
+                                    DisplayType: "In", //Out
+                                    DisplaySelect: false,
+                                    Hide: false,
+                                    Equal: false
+                                };
+                                data[convertField][index] = newFieldModel;
+                                // }
+                                index++;
+                            });
+                        }
+                    }
+                } else {
+                    try {
+                        data[convertField] = JSON.parse(data[convertField]);
+                    } catch (error) {
+                        try {
+                            data[convertField] = data[convertField].replace(/\\\\/g, "\\");
+                            data[convertField] = JSON.parse(data[convertField]);
+                        } catch (error) {
+                            data[convertField] = [];
+                            console.log("数据转换出现错误，请联系系统管理员：" + convertField + "-" + data.Name, data[convertField]);
+                            // DiyCommon.Tips('数据转换出现错误，请联系系统管理员！', false);
+                        }
+                    }
+                }
+                //修复V8CodeShow、ShowRow
+                if (convertField == "MoreBtns" && !DiyCommon.IsNull(data[convertField])) {
+                    data[convertField].forEach((btn) => {
+                        if (DiyCommon.IsNull(btn.V8CodeShow)) {
+                            btn.V8CodeShow = "";
+                        }
+                        if (DiyCommon.IsNull(btn.ShowRow)) {
+                            btn.ShowRow = false;
+                        }
+                    });
+                }
+                //修复按钮的IsVisible
+                if (!DiyCommon.IsNull(data[convertField])) {
+                    if (Array.isArray(data[convertField])) {
+                        data[convertField].forEach((btn) => {
+                            if (typeof btn == "object") {
+                                if (btn && DiyCommon.IsNull(btn.IsVisible)) {
+                                    btn["IsVisible"] = true; //2021-09-07修改为true
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+
+            if (!DiyCommon.IsNull(data._Child) && data._Child.length > 0) {
+                data._Child.forEach((childData) => {
+                    DiyCommon.ForConvertSysMenu(childData);
+                });
+            }
+        });
+    },
+    FormExportFileV2(url, param, callback, fileName, paramType) {
+        param.authorization = "Bearer " + DiyCommon.getToken();
+        //responseType: "json",
+        var option = {
+            url: url, // 替换为你的文件下载链接
+            method: "POST",
+            // params: param,
+            data: qs.stringify(param),
+            responseType: "blob" // 告诉Axios返回的数据类型是二进制数据
+        };
+        if (paramType == "json") {
+            option.data = param;
+        }
+        axios(option)
+            .then((response) => {
+                console.log("返回格式", response.data.type);
+                if (response.data.type == "application/json") {
+                    // Step 1: 将 Blob 转换为文本
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        try {
+                            const jsonResponse = JSON.parse(reader.result); // 解析为 JSON 对象
+
+                            // Step 2: 获取 Base64 字符串
+                            const base64String = jsonResponse.Data?.FileByteBase64;
+                            if (!base64String) {
+                                throw new Error("FileByteBase64 不存在");
+                            }
+
+                            // Step 3: 解码 Base64 为 Uint8Array
+                            const binaryString = atob(base64String);
+                            const len = binaryString.length;
+                            const bytes = new Uint8Array(len);
+                            for (let i = 0; i < len; i++) {
+                                bytes[i] = binaryString.charCodeAt(i);
+                            }
+
+                            // Step 4: 创建 Blob 并生成下载链接
+                            const blob = new Blob([bytes], { type: "application/vnd.ms-excel" });
+                            const urlBlob = window.URL.createObjectURL(blob);
+
+                            // Step 5: 创建 a 标签并触发下载
+                            const link = document.createElement("a");
+                            link.href = urlBlob;
+                            link.setAttribute("download", `导出${fileName || ""}-${new Date().Format("yyyyMMddHHmmss")}.xls`);
+                            document.body.appendChild(link);
+                            link.click();
+
+                            // Step 6: 清理资源
+                            window.URL.revokeObjectURL(urlBlob);
+                            document.body.removeChild(link);
+
+                            if (callback) {
+                                callback();
+                            }
+                        } catch (e) {
+                            console.error("解析响应失败：", e);
+                            DiyCommon.Tips("文件解析失败，请稍后重试。", false);
+                        }
+                    };
+                    reader.readAsText(response.data); // 使用 readAsText 处理 Blob
+                } else {
+                    const url = window.URL.createObjectURL(new Blob([response.data]));
+                    const link = document.createElement("a");
+                    link.href = url;
+                    link.setAttribute("download", `导出${fileName || ""}-${new Date().Format("yyyyMMddHHmmss")}.xls`); // 替换为你想要的文件名和扩展名
+                    document.body.appendChild(link);
+                    link.click();
+                    // 修复内存泄漏：释放 Blob URL 与 DOM 节点
+                    setTimeout(() => {
+                        try { document.body.removeChild(link); } catch (e) {}
+                        try { window.URL.revokeObjectURL(url); } catch (e) {}
+                    }, 0);
+                    if (callback) {
+                        callback();
+                    }
+                }
+            })
+            .catch((error) => {
+                console.error(error);
+                if (callback) {
+                    callback();
+                }
+            });
+    },
+    FormExportFile(url, param, callback) {
+        var form = $("<form>");
+        form.attr("style", "display:none");
+        //下面这句不能注释 ，注释后，打包后的程序导出会白屏
+        // form.attr('target', '_blank');
+        form.attr("method", "post");
+        form.attr("action", url);
+        $("body").append(form);
+
+        for (const key in param) {
+            if (Array.isArray(param[key])) {
+                param[key].forEach((element) => {});
+            }
+            // //如果是数组 -- 2024-01-23 by Anderson
+            // else if (Array.isArray(param[key])) {
+            //     var childIndex = 0;
+            //     param[key].forEach((childChild, ccIndex) => {
+            //         var input1 = $('<input>');
+            //         input1.attr('type', 'hidden');
+            //         input1.attr('name', key + '[' + keyChild + '][' + ccIndex + ']');
+            //         input1.attr('value', param[key][keyChild][ccIndex]);
+            //         form.append(input1);
+            //         childIndex++;
+            //     });
+            // }
+            //如果是对象
+            else if (typeof param[key] == "object") {
+                var childIndex = 0;
+                for (const keyChild in param[key]) {
+                    //这里还要判断child值是不是数组
+                    if (Array.isArray(param[key][keyChild])) {
+                        param[key][keyChild].forEach((childChild, ccIndex) => {
+                            var input1 = $("<input>");
+                            input1.attr("type", "hidden");
+                            input1.attr("name", key + "[" + keyChild + "][" + ccIndex + "]");
+                            input1.attr("value", param[key][keyChild][ccIndex]);
+                            form.append(input1);
+                            childIndex++;
+                        });
+                    } else {
+                        var input1 = $("<input>");
+                        input1.attr("type", "hidden");
+                        input1.attr("name", key + "[" + keyChild + "]");
+                        input1.attr("value", param[key][keyChild]);
+                        form.append(input1);
+                        childIndex++;
+                    }
+                }
+            } else {
+                var input1 = $("<input>");
+                input1.attr("type", "hidden");
+                input1.attr("name", key);
+                input1.attr("value", param[key]);
+                form.append(input1);
+            }
+        }
+        //新增token  2022-05-13
+        var inputToken = $("<input>");
+        inputToken.attr("type", "hidden");
+        inputToken.attr("name", "authorization");
+        inputToken.attr("value", "Bearer " + DiyCommon.getToken());
+        form.append(inputToken);
+
+        form.submit();
+        form.remove();
+        if (callback) {
+            callback();
+        }
+    },
+    /*
+      chinese : 中文
+      fullPyLen: 2(默认)，前几个字全拼音
+      type : 1 驼峰（默认），2全大写，3全小写
+
+  */
+    ChineseToPinyin(chinese, fullPyLen, type) {
+        try {
+            if (DiyCommon.IsNull(chinese)) {
+                return "";
+            }
+            if (DiyCommon.IsNull(fullPyLen)) {
+                fullPyLen = 2;
+            }
+            if (DiyCommon.IsNull(type)) {
+                type = 1;
+            }
+            var pyStr = "";
+            var pinyin = require("pinyin");
+            if (chinese.length > fullPyLen) {
+                // 先把前2个的全拼音取出来
+                var label1 = chinese.substring(0, fullPyLen);
+                var pyArr = pinyin(label1, {
+                    style: pinyin.STYLE_NORMAL
+                });
+                pyArr.forEach((element) => {
+                    // var tName = element[0];
+                    // pyStr += tName[0].toUpperCase() + tName.substring(1, tName.length);
+                    pyStr += element[0];
+                });
+                if (type == 1) {
+                    pyStr = pyStr[0].toUpperCase() + pyStr.substring(1, pyStr.length);
+                } else if (type == 2) {
+                    pyStr = pyStr.toUpperCase();
+                } else if (type == 3) {
+                    pyStr = pyStr.toLowerCase();
+                }
+
+                // pyStr += '_';
+
+                // 再把剩下的取首字母出来。如果前面的length=2，后面的就不要大写
+                var lengthIs2 = pyStr.length == fullPyLen;
+                var label2 = chinese.substring(fullPyLen, chinese.length);
+                pyArr = pinyin(label2, {
+                    style: pinyin.STYLE_FIRST_LETTER
+                });
+                pyArr.forEach((element) => {
+                    if (type == 1) {
+                        pyStr += lengthIs2 ? element[0] : element[0].toUpperCase();
+                    } else if (type == 2) {
+                        pyStr += element[0].toUpperCase();
+                    } else if (type == 3) {
+                        pyStr += element[0].toLowerCase();
+                    }
+                });
+            } else {
+                var pyArr = pinyin(chinese, {
+                    style: pinyin.STYLE_NORMAL
+                });
+                pyArr.forEach((element) => {
+                    pyStr += element[0];
+                });
+                if (pyStr.length > 0) {
+                    if (type == 1) {
+                        pyStr = pyStr[0].toUpperCase() + pyStr.substring(1, pyStr.length);
+                    } else if (type == 2) {
+                        pyStr = pyStr.toUpperCase();
+                    } else if (type == 3) {
+                        pyStr = pyStr.toLowerCase();
+                    }
+                }
+            }
+
+            return pyStr;
+        } catch (error) {
+            return "";
+        }
+    },
+    async NewServerGuid() {
+        return (await DiyCommon.PostAsync("/api/FormEngine/NewGuid")).Data;
+    },
+    /**
+     * 必传：DataSourceKey
+     */
+    DataSourceEngine: {
+        /**
+         * 已弃用
+         * @param {*} param
+         * @returns
+         */
+        async GetData(param) {
+            var result = await DiyCommon.PostAsync("/api/DataSourceEngine/Run", param, null, null, "json");
+            if (callback) {
+                callback(result);
+            }
+            return result;
+        },
+        /**
+         *
+         * @param {*} param 可以是 'DataSourceKey'，也可以是  { DataSourceKey : '', Id:'' }
+         * @param {*} param2 可以是回调，也可以是 { DataSourceKey : '', Id:'' }
+         * @param {*} param3 可以是回调
+         * @returns
+         */
+        async Run(param, param2, param3) {
+            if (typeof param == "string") {
+                //如果是这种模式：.Run('DataSourceKey', {}, function(){})
+                var dataSourceKey = param.toString();
+                param = {};
+                param.DataSourceKey = dataSourceKey;
+                for (let key in param2) {
+                    param[key] = param2[key];
+                }
+                var result = await DiyCommon.PostAsync("/api/DataSourceEngine/Run", param, null, null, "json");
+                if (param3) {
+                    param3(result);
+                }
+                return result;
+            } else {
+                //如果是这种模式：.Run({}, function(){})
+                var result = await DiyCommon.PostAsync("/api/DataSourceEngine/Run", param, null, null, "json");
+                if (param2) {
+                    param2(result);
+                }
+                return result;
+            }
+        }
+    },
+    /**
+     * ApiEngineKey
+     */
+    ApiEngine: {
+        async Run(param, param2, param3) {
+            if (typeof param == "string") {
+                //如果是这种模式：.Run('ApiEngineKey', {}, function(){})
+                var apiKey = param.toString();
+                param = {};
+                param.ApiEngineKey = apiKey;
+                for (let key in param2) {
+                    param[key] = param2[key];
+                }
+                var result = await DiyCommon.PostAsync("/api/ApiEngine/Run", param, null, null, "json");
+                if (param3) {
+                    param3(result);
+                }
+                return result;
+            } else {
+                //如果是这种模式：.Run({}, function(){})
+                var result = await DiyCommon.PostAsync("/api/ApiEngine/Run", param, null, null, "json");
+                if (param2) {
+                    param2(result);
+                }
+                return result;
+            }
+        }
+    },
+    ModuleEngine: {
+        async GetTableData(param, callback) {
+            var result = await DiyCommon.PostAsync("/api/ModuleEngine/GetTableData", param, null, null, "json");
+            if (callback) {
+                callback(result);
+            }
+            return result;
+        },
+        async GetTableTree(param, callback) {
+            var result = await DiyCommon.PostAsync("/api/ModuleEngine/GetTableTree", param, null, null, "json");
+            if (callback) {
+                callback(result);
+            }
+            return result;
+        }
+    },
+    FormEngine: {
+        async CommonFormEngineFunc(url, paramOrKey, callbackOrParam, callback) {
+            var param = {};
+            if (typeof paramOrKey == "string") {
+                param = callbackOrParam || {};
+                param.FormEngineKey = paramOrKey;
+            } else {
+                param = paramOrKey;
+            }
+            var result = await DiyCommon.PostAsync(url, param, null, null, "json");
+            if (callback) {
+                callback(result);
+            } else if (typeof callbackOrParam == "function") {
+                callbackOrParam(result);
+            }
+            return result;
+        },
+        async GetFormData(paramOrKey, callbackOrParam, callback) {
+            return await DiyCommon.FormEngine.CommonFormEngineFunc(DiyApi.FormEngine.GetFormData, paramOrKey, callbackOrParam, callback);
+        },
+        async GetFormDataAnonymous(paramOrKey, callbackOrParam, callback) {
+            return await DiyCommon.FormEngine.CommonFormEngineFunc(DiyApi.FormEngine.GetFormDataAnonymous, paramOrKey, callbackOrParam, callback);
+        },
+        async GetTableData(paramOrKey, callbackOrParam, callback) {
+            return await DiyCommon.FormEngine.CommonFormEngineFunc(DiyApi.FormEngine.GetTableData, paramOrKey, callbackOrParam, callback);
+        },
+        async GetTableTree(paramOrKey, callbackOrParam, callback) {
+            return await DiyCommon.FormEngine.CommonFormEngineFunc(DiyApi.FormEngine.GetTableTree, paramOrKey, callbackOrParam, callback);
+        },
+        async AddFormData(paramOrKey, callbackOrParam, callback) {
+            return await DiyCommon.FormEngine.CommonFormEngineFunc(DiyApi.FormEngine.AddFormData, paramOrKey, callbackOrParam, callback);
+        },
+        async AddFormDataBatch(param, callback) {
+            var result = await DiyCommon.PostAsync(DiyApi.FormEngine.AddFormDataBatch, param, null, null, "json");
+            if (callback) {
+                callback(result);
+            }
+            return result;
+        },
+        async UptFormData(paramOrKey, callbackOrParam, callback) {
+            return await DiyCommon.FormEngine.CommonFormEngineFunc(DiyApi.FormEngine.UptFormData, paramOrKey, callbackOrParam, callback);
+        },
+        async UptFormDataBatch(param, callback) {
+            var result = await DiyCommon.PostAsync(DiyApi.FormEngine.UptFormDataBatch, param, null, null, "json");
+            if (callback) {
+                callback(result);
+            }
+            return result;
+        },
+        UptFormDataByWhere: async function (paramOrKey, callbackOrParam, callback) {
+            return await DiyCommon.FormEngine.CommonFormEngineFunc(DiyApi.FormEngine.UptFormDataByWhere, paramOrKey, callbackOrParam, callback);
+        },
+        async DelFormDataByWhere(paramOrKey, callbackOrParam, callback) {
+            return await DiyCommon.FormEngine.CommonFormEngineFunc(DiyApi.FormEngine.DelFormDataByWhere, paramOrKey, callbackOrParam, callback);
+        },
+        async DelFormDataBatch(param, callback) {
+            var result = await DiyCommon.PostAsync(DiyApi.FormEngine.DelFormDataBatch, param, null, null, "json");
+            if (callback) {
+                callback(result);
+            }
+            return result;
+        },
+        async DelFormData(paramOrKey, callbackOrParam, callback) {
+            return await DiyCommon.FormEngine.CommonFormEngineFunc(DiyApi.FormEngine.DelFormData, paramOrKey, callbackOrParam, callback);
+        }
+    },
+    async CreatQRCode(content, refElement) {
+        // 使用主流的 qrcode 库（纯 JS 实现，无兼容性问题）
+        const QRCodeModule = await import('qrcode');
+        const qrcode = QRCodeModule.default || QRCodeModule;
+        
+        const container = refElement || this.$refs.qrCodeUrl;
+        if (container) {
+            container.innerHTML = '';
+            const canvas = document.createElement('canvas');
+            container.appendChild(canvas);
+            await qrcode.toCanvas(canvas, content, {
+                width: 512,
+                margin: 1,
+                color: {
+                    dark: '#000000',
+                    light: '#ffffff'
+                }
+            });
+        }
+        return qrcode;
+    },
+    _V8BaseInstance : null,
+    _globalV8CodeExecuted: false, // 全局V8代码只执行一次的标记
+    /**
+     * 2026-05 修复：把每次 InitV8Code / InitV8CodeSync 都需要刷新的动态上下文统一处理。
+     * 历史 bug：_V8BaseInstance 是进程级单例缓存，会用第一次构建时的 CurrentUser（很可能是 undefined）
+     * 通过 Object.assign 覆盖 V8.CurrentUser，导致 diy-form-full 的 FormBtns / PageBtns / PageTabs /
+     * BatchSelectMoreBtns / ExportMoreBtns 的 V8Code 与 V8CodeShow 拿不到登录用户。
+     * 这里始终从最新的 Pinia store 读取，确保 V8 拿到的是当前登录态。
+     */
+    _RefreshV8DynamicContext(V8) {
+        try {
+            var diyStore = getDiyStore();
+            // CurrentUser 来自 Pinia getter，必须通过 useDiyStore() 触发，$state 取不到 getter
+            V8.CurrentUser = diyStore.GetCurrentUser;
+            V8.SysConfig = diyStore.SysConfig;
+            V8.OsClient = DiyCommon.GetOsClient();
+            V8.CurrentToken = DiyCommon.getToken ? DiyCommon.getToken() : getToken();
+        } catch (e) {
+            // 极早期调用（store 未就绪）时容错
+            V8.CurrentUser = V8.CurrentUser || {};
+        }
+    },
+    async InitV8Code(V8, router) {
+        if(DiyCommon._V8BaseInstance == null){
+            V8 = DiyCommon.InitV8CodeSync(V8, router, false);
+            // 性能优化：全局V8代码只在第一次调用时执行（通常包含外部库加载，第一次需要585ms）
+            // 后续调用直接跳过，避免重复执行
+            if (!DiyCommon._globalV8CodeExecuted) {
+                try {
+                    if (store.state.DiyStore.SysConfig && store.state.DiyStore.SysConfig.GlobalV8Code) {
+                        try {
+                            console.time("Microi：【性能监控】执行全局V8引擎代码耗时");
+                            await eval("(async () => {\n " + store.state.DiyStore.SysConfig.GlobalV8Code + " \n})()");
+                            console.timeEnd("Microi：【性能监控】执行全局V8引擎代码耗时");
+                            DiyCommon._globalV8CodeExecuted = true; // 标记已执行
+                        } catch (error) {
+                            DiyCommon.Tips("执行全局V8引擎代码出现错误：" + error.message, false);
+                            console.log("执行全局V8引擎代码出现错误：", error);
+                        }
+                    }
+                } catch (error) {}
+            }
+        }
+        if(V8.NewServerGuid == null){
+            V8.NewServerGuid = await DiyCommon.NewServerGuid;
+        }
+        Object.assign(V8, DiyCommon._V8BaseInstance);
+        // 2026-05 修复：_V8BaseInstance 是进程级单例缓存，但 CurrentUser / CurrentToken / SysConfig
+        // 会随登录态、Token 刷新、租户切换发生变化，必须每次从 store 读取最新值，
+        // 否则会覆盖 SetV8DefaultValue 刚写入的最新 CurrentUser（典型场景：FormBtns / PageBtns 按钮 V8 中 V8.CurrentUser 为空）。
+        DiyCommon._RefreshV8DynamicContext(V8);
+        return V8;
+    },
+    InitV8CodeSync(V8, router, execGlobalV8Code = true) {
+        if(DiyCommon._V8BaseInstance == null){
+            DiyCommon._V8BaseInstance = {
+                ClientVersion : packageInfo.version,
+                ClientType : DiyCommon.GetClientType(), //PC、IOS、Android、H5、WeChat
+                OsClient : DiyCommon.GetOsClient(),
+                DiyCommon : DiyCommon,
+                CreatQRCode : DiyCommon.CreatQRCode,
+                FormEngine : DiyCommon.FormEngine,
+                DataSourceEngine : DiyCommon.DataSourceEngine,
+                ApiEngine : DiyCommon.ApiEngine,
+                Extend : {},
+                NewGuid : DiyCommon.NewGuid,
+                // NewServerGuid : await DiyCommon.NewServerGuid,
+                ChineseToPinyin : DiyCommon.ChineseToPinyin,
+                Router : {
+                    Push: function (url) {
+                        router.push(url);
+                    }
+                },
+                Window : {
+                    Open: function (url) {
+                        // 安全修复：外部链接默认 noopener,noreferrer
+                        window.open(url, "_blank", "noopener,noreferrer");
+                    }
+                },
+                Post : DiyCommon.Post,
+                PostSync : DiyCommon.Post,
+                PostAsync : DiyCommon.PostAsync,
+                Get : DiyCommon.Get,
+                GetSync : DiyCommon.GetSync,
+                GetAsync : DiyCommon.GetAsync,
+                Tips : DiyCommon.Tips,
+                ConfirmTips : DiyCommon.OsConfirm,
+                // 注意：CurrentUser / CurrentToken / SysConfig 不放在静态缓存里，
+                // 由 _RefreshV8DynamicContext 在每次 InitV8Code / InitV8CodeSync 调用时刷新（见下方 Object.assign 后的逻辑）。
+
+                IsNull : DiyCommon.IsNull,
+
+                AddDiyTableRow : DiyCommon.AddDiyTableRow,
+                AddDiyTableRowBatch : DiyCommon.AddDiyTableRowBatch,
+                UptDiyTableRow : DiyCommon.UptDiyTableRow,
+                UptDiyTableRowBatch : DiyCommon.UptDiyTableRowBatch,
+                DelDiyTableRow : DiyCommon.DelDiyTableRow,
+                DelDiyTableRowBatch : DiyCommon.DelDiyTableRowBatch,
+                GetDiyTableRow : DiyCommon.GetDiyTableRow,
+                GetDiyTableRowOld : DiyCommon.GetDiyTableRowOld,
+                GetDiyTableRowModel : DiyCommon.GetDiyTableRowModel,
+                GetDiyTableRowModelAsync : DiyCommon.GetDiyTableRowModelAsync,
+                UptDiyDataListByWhere : DiyCommon.UptDiyDataListByWhere,
+                DelDiyDataListByWhere : DiyCommon.DelDiyDataListByWhere,
+                _ : _,
+                AddSysLog : DiyCommon.AddSysLog,
+                WF : {
+                    StartWork : DiyCommon.StartWork
+                },
+                WorkFlow : V8.WF,
+                // CurrentToken / SysConfig 同 CurrentUser 一样需要每次刷新，不进静态缓存
+                SendSystemMessage : DiyCommon.SendSystemMessage,
+                Base64 : Base64
+            };
+            // 注册 V8.Method（含 ScanCode 扫码功能）
+            initV8ScanCode(DiyCommon._V8BaseInstance);
+            // 注册 V8.Print 蓝牙打印功能
+            initV8Print(DiyCommon._V8BaseInstance);
+        }
+        Object.assign(V8, DiyCommon._V8BaseInstance);
+        // 2026-05 修复：用最新 store 值刷新动态上下文（CurrentUser / CurrentToken / SysConfig）
+        DiyCommon._RefreshV8DynamicContext(V8);
+        // 确保每个 V8 实例的 Method.ScanCode 闭包引用正确的 V8 对象
+        initV8ScanCode(V8);
+        // 确保每个 V8 实例的 Print 引用正确的 V8 对象
+        initV8Print(V8);
+        // 性能优化：全局V8代码只在第一次调用时执行（通常包含外部库加载，第一次需要585ms）
+        // 后续调用直接跳过，避免重复执行
+        if (!DiyCommon._globalV8CodeExecuted && execGlobalV8Code) {
+            try {
+                if (store.state.DiyStore.SysConfig && store.state.DiyStore.SysConfig.GlobalV8Code) {
+                    try {
+                        console.time("Microi：【性能监控】执行全局V8引擎代码耗时");
+                        eval(store.state.DiyStore.SysConfig.GlobalV8Code);
+                        console.timeEnd("Microi：【性能监控】执行全局V8引擎代码耗时");
+                        DiyCommon._globalV8CodeExecuted = true; // 标记已执行
+                    } catch (error) {
+                        DiyCommon.Tips("执行全局V8引擎代码出现错误：" + error.message, false);
+                        console.log("执行全局V8引擎代码出现错误：", error);
+                    }
+                }
+            } catch (error) {}
+        }
+        return V8;
+    },
+    
+    //传入Content、ToUserId
+    SendSystemMessage(param, callback) {
+        var self = this;
+        DiyCommon.Post("/api/DiyChat/SendSystemMessage", param, function (result) {
+            callback(result);
+        });
+    },
+    //传入：{FlowDesignId（流程图Id，必传）、LineValue（只有一条线时可不传）、FormData（可选，object类型）、TableRowId（关联的数据Id，必传）、
+    //NoticeFields（通知数据，可选，格式：[{Id:'字段Id',Name:'字段名',Label:'字段名称',Value:'值'}]）}, Callback（可选，回调函数）
+    StartWork(param, callback) {
+        //发起工作
+        // param.FormData = param.FormData ? JSON.stringify(param.FormData) : '{}';
+        // {
+        //     FlowDesignId: param.FlowDesignId,
+        //     LineValue: param.LineValue,
+        //     FormData: param.FormData ? JSON.stringify(param.FormData) : '{}',
+        //     TableRowId: param.TableRowId,
+        //     NoticeFields: param.NoticeFields,
+        // }
+        if (param.FormData && typeof param.FormData == "object") {
+            param.FormData = JSON.stringify(param.FormData);
+        }
+        if (param.NoticeFields && typeof param.NoticeFields == "object") {
+            param.NoticeFields = JSON.stringify(param.NoticeFields);
+        }
+        DiyCommon.Post("/api/WorkFlow/startWork", param, function (result) {
+            if (DiyCommon.Result(result)) {
+                var receivers = "";
+                result.Data.Receivers.forEach((user) => {
+                    receivers += user.Name + ",";
+                });
+                try {
+                    receivers = receivers.TrimEnd(",");
+                } catch (error) {}
+                DiyCommon.Tips("流程发起成功！<br>已发送至待办人：" + receivers + "。<br>已发送至节点：" + (result.Data.ToNodeName ? result.Data.ToNodeName : "无") + "。", true, 10);
+
+                // self.ShowStartFlowForm = false;
+                // self.$nextTick(function(){
+                //     // self.BtnLoading = false;
+                // });
+            } else {
+                // self.BtnLoading = false;
+            }
+            callback(result);
+        });
+    },
+    Base64EncodeDiyTable(diyTableModel) {
+        var self = this;
+        return;//有https传输，这个base64编码实际上毫无意义，只是部分客户非得有此要求？
+        if (Base64 && Base64.isValid) {
+            if (diyTableModel.InFormV8 && !Base64.isValid(diyTableModel.InFormV8)) {
+                try {
+                    diyTableModel.InFormV8 = Base64.encode(diyTableModel.InFormV8);
+                } catch (error) {}
+            }
+            if (diyTableModel.SubmitFormV8 && !Base64.isValid(diyTableModel.SubmitFormV8)) {
+                try {
+                    diyTableModel.SubmitFormV8 = Base64.encode(diyTableModel.SubmitFormV8);
+                } catch (error) {}
+            }
+            if (diyTableModel.OutFormV8 && !Base64.isValid(diyTableModel.OutFormV8)) {
+                try {
+                    diyTableModel.OutFormV8 = Base64.encode(diyTableModel.OutFormV8);
+                } catch (error) {}
+            }
+            if (diyTableModel.ServerDataV8 && !Base64.isValid(diyTableModel.ServerDataV8)) {
+                try {
+                    diyTableModel.ServerDataV8 = Base64.encode(diyTableModel.ServerDataV8);
+                } catch (error) {}
+            }
+        }
+    },
+    Base64DecodeDiyTable(diyTableModel) {
+        var self = this;
+        if (Base64 && Base64.isValid) {
+            // 辅助函数：安全解码，如果结果包含乱码则返回原值
+            const safeDecode = (value) => {
+                try {
+                    const decoded = Base64.decode(value);
+                    // 检查解码结果是否包含乱码字符（U+FFFD）
+                    if (decoded.includes('�')) {
+                        return value; // 返回原值
+                    }
+                    return decoded;
+                } catch (error) {
+                    return value; // 解码失败，返回原值
+                }
+            };
+
+            if (diyTableModel.InFormV8 && Base64.isValid(diyTableModel.InFormV8)) {
+                diyTableModel.InFormV8 = safeDecode(diyTableModel.InFormV8);
+            }
+            if (diyTableModel.SubmitFormV8 && Base64.isValid(diyTableModel.SubmitFormV8)) {
+                diyTableModel.SubmitFormV8 = safeDecode(diyTableModel.SubmitFormV8);
+            }
+            if (diyTableModel.OutFormV8 && Base64.isValid(diyTableModel.OutFormV8)) {
+                diyTableModel.OutFormV8 = safeDecode(diyTableModel.OutFormV8);
+            }
+            if (diyTableModel.ServerDataV8 && Base64.isValid(diyTableModel.ServerDataV8)) {
+                diyTableModel.ServerDataV8 = safeDecode(diyTableModel.ServerDataV8);
+            }
+        }
+    },
+    Base64EncodeDiyField(diyFieldModel) {
+        var self = this;
+        return;//有https传输，这个base64编码实际上毫无意义，只是部分客户非得有此要求？
+        if (Base64 && Base64.isValid) {
+            if (diyFieldModel.KeyupV8Code && !Base64.isValid(diyFieldModel.KeyupV8Code)) {
+                try {
+                    diyFieldModel.KeyupV8Code = Base64.encode(diyFieldModel.KeyupV8Code);
+                } catch (error) {}
+            }
+            if (diyFieldModel.V8TmpEngineForm && !Base64.isValid(diyFieldModel.V8TmpEngineForm)) {
+                try {
+                    diyFieldModel.V8TmpEngineForm = Base64.encode(diyFieldModel.V8TmpEngineForm);
+                } catch (error) {}
+            }
+            if (diyFieldModel.V8TmpEngineTable && !Base64.isValid(diyFieldModel.V8TmpEngineTable)) {
+                try {
+                    diyFieldModel.V8TmpEngineTable = Base64.encode(diyFieldModel.V8TmpEngineTable);
+                } catch (error) {}
+            }
+            if (diyFieldModel.Config) {
+                if (diyFieldModel.Config.Sql && !Base64.isValid(diyFieldModel.Config.Sql)) {
+                    try {
+                        diyFieldModel.Config.Sql = Base64.encode(diyFieldModel.Config.Sql);
+                    } catch (error) {}
+                }
+                if (diyFieldModel.Config.V8Code && !Base64.isValid(diyFieldModel.Config.V8Code)) {
+                    try {
+                        diyFieldModel.Config.V8Code = Base64.encode(diyFieldModel.Config.V8Code);
+                    } catch (error) {}
+                }
+                if (diyFieldModel.Config.V8CodeBlur && !Base64.isValid(diyFieldModel.Config.V8CodeBlur)) {
+                    try {
+                        diyFieldModel.Config.V8CodeBlur = Base64.encode(diyFieldModel.Config.V8CodeBlur);
+                    } catch (error) {}
+                }
+                if (diyFieldModel.Config.TableChildRowClickV8 && !Base64.isValid(diyFieldModel.Config.TableChildRowClickV8)) {
+                    try {
+                        diyFieldModel.Config.TableChildRowClickV8 = Base64.encode(diyFieldModel.Config.TableChildRowClickV8);
+                    } catch (error) {}
+                }
+                if (diyFieldModel.Config.OpenTable) {
+                    if (diyFieldModel.Config.OpenTable.SubmitV8 && !Base64.isValid(diyFieldModel.Config.OpenTable.SubmitV8)) {
+                        try {
+                            diyFieldModel.Config.OpenTable.SubmitV8 = Base64.encode(diyFieldModel.Config.OpenTable.SubmitV8);
+                        } catch (error) {}
+                    }
+                    if (diyFieldModel.Config.OpenTable.BeforeOpenV8 && !Base64.isValid(diyFieldModel.Config.OpenTable.BeforeOpenV8)) {
+                        try {
+                            diyFieldModel.Config.OpenTable.BeforeOpenV8 = Base64.encode(diyFieldModel.Config.OpenTable.BeforeOpenV8);
+                        } catch (error) {}
+                    }
+                }
+            }
+        }
+    },
+    Base64DecodeDiyField(diyFieldModel) {
+        var self = this;
+        if (Base64 && Base64.isValid) {
+            if (diyFieldModel.KeyupV8Code && Base64.isValid(diyFieldModel.KeyupV8Code)) {
+                try {
+                    diyFieldModel.KeyupV8Code = Base64.decode(diyFieldModel.KeyupV8Code);
+                } catch (error) {}
+            }
+            if (diyFieldModel.V8TmpEngineForm && Base64.isValid(diyFieldModel.V8TmpEngineForm)) {
+                try {
+                    diyFieldModel.V8TmpEngineForm = Base64.decode(diyFieldModel.V8TmpEngineForm);
+                } catch (error) {}
+            }
+            if (diyFieldModel.V8TmpEngineTable && Base64.isValid(diyFieldModel.V8TmpEngineTable)) {
+                try {
+                    diyFieldModel.V8TmpEngineTable = Base64.decode(diyFieldModel.V8TmpEngineTable);
+                } catch (error) {}
+            }
+            if (diyFieldModel.Config) {
+                if (diyFieldModel.Config.Sql && Base64.isValid(diyFieldModel.Config.Sql)) {
+                    try {
+                        diyFieldModel.Config.Sql = Base64.decode(diyFieldModel.Config.Sql);
+                    } catch (error) {}
+                }
+                if (diyFieldModel.Config.V8Code && Base64.isValid(diyFieldModel.Config.V8Code)) {
+                    try {
+                        diyFieldModel.Config.V8Code = Base64.decode(diyFieldModel.Config.V8Code);
+                    } catch (error) {}
+                }
+                if (diyFieldModel.Config.V8CodeBlur && Base64.isValid(diyFieldModel.Config.V8CodeBlur)) {
+                    try {
+                        diyFieldModel.Config.V8CodeBlur = Base64.decode(diyFieldModel.Config.V8CodeBlur);
+                    } catch (error) {}
+                }
+                if (diyFieldModel.Config.TableChildRowClickV8 && Base64.isValid(diyFieldModel.Config.TableChildRowClickV8)) {
+                    try {
+                        diyFieldModel.Config.TableChildRowClickV8 = Base64.decode(diyFieldModel.Config.TableChildRowClickV8);
+                    } catch (error) {}
+                }
+                if (diyFieldModel.Config.OpenTable) {
+                    if (diyFieldModel.Config.OpenTable.SubmitV8 && Base64.isValid(diyFieldModel.Config.OpenTable.SubmitV8)) {
+                        try {
+                            diyFieldModel.Config.OpenTable.SubmitV8 = Base64.decode(diyFieldModel.Config.OpenTable.SubmitV8);
+                        } catch (error) {}
+                    }
+                    if (diyFieldModel.Config.OpenTable.BeforeOpenV8 && Base64.isValid(diyFieldModel.Config.OpenTable.BeforeOpenV8)) {
+                        try {
+                            diyFieldModel.Config.OpenTable.BeforeOpenV8 = Base64.decode(diyFieldModel.Config.OpenTable.BeforeOpenV8);
+                        } catch (error) {}
+                    }
+                }
+            }
+        }
+    },
+    DateDiff(startTime, endTime, interval) {
+        if (DiyCommon.IsNull(startTime) || DiyCommon.IsNull(endTime) || DiyCommon.IsNull(interval)) {
+            return 0;
+        }
+        var _startTime = startTime;
+        var _endTime = endTime;
+        if (typeof startTime == "string") {
+            _startTime = new Date(startTime);
+        }
+        if (typeof endTime == "string") {
+            _endTime = new Date(endTime);
+        }
+        var d = _startTime;
+        var i = {};
+        var t = d.getTime();
+        var t2 = _endTime.getTime();
+        i["y"] = _endTime.getFullYear() - d.getFullYear();
+        i["q"] = i["y"] * 4 + Math.floor(_endTime.getMonth() / 4) - Math.floor(d.getMonth() / 4);
+        i["m"] = i["y"] * 12 + _endTime.getMonth() - d.getMonth();
+        i["ms"] = _endTime.getTime() - d.getTime();
+        i["w"] = Math.floor((t2 + 345600000) / 604800000) - Math.floor((t + 345600000) / 604800000);
+        i["d"] = Math.floor(t2 / 86400000) - Math.floor(t / 86400000);
+        i["h"] = Math.floor(t2 / 3600000) - Math.floor(t / 3600000);
+        i["n"] = Math.floor(t2 / 60000) - Math.floor(t / 60000);
+        i["s"] = Math.floor(t2 / 1000) - Math.floor(t / 1000);
+        return i[interval];
+    },
+    //传入TableId，TableRowId，
+    GetDiyTableRowModel(param, callback) {
+        DiyCommon.Post(DiyApi.GetDiyTableRowModel, param, function (result) {
+            callback(result);
+            // if (DiyCommon.Result(result)) {
+            //     // callback(result.Data)
+            // }
+            // callback(result.Data)
+        });
+    },
+    async GetDiyTableRowModelAsync(param, callback) {
+        var result = await DiyCommon.PostAsync(DiyApi.GetDiyTableRowModel, param);
+        callback(result);
+        // if (DiyCommon.Result(result)) {
+        //     // callback(result.Data)
+        // }
+        // callback(result.Data)
+    },
+    //传入TableId
+    //_Search:{FieldName:''}
+    //_Top:1
+    //_OrderBy:'FiedlName',
+    //_OrderByType:'desc'
+    GetDiyTableRowOld(param, callback) {
+        DiyCommon.Post(DiyApi.GetDiyTableRow, param, function (result) {
+            if (DiyCommon.Result(result)) {
+                callback(result.Data);
+            } else {
+                callback([]);
+                // console.log(result)
+            }
+        });
+    },
+    GetDiyTableRow(param, callback) {
+        DiyCommon.Post(DiyApi.GetDiyTableRow, param, function (result) {
+            callback(result);
+            // if (DiyCommon.Result(result)) {
+            //     callback(result.Data)
+            // }else {
+            //     callback([])
+            //     // console.log(result)
+            // }
+        });
+    },
+    //传入TableId
+    //_TableRowId
+    //_FormData
+    UptDiyTableRow(param, callback) {
+        DiyCommon.Post(DiyApi.UptDiyTableRow, param, function (result) {
+            callback(result);
+        });
+    },
+    UptDiyTableRowBatch(param, callback) {
+        DiyCommon.Post(DiyApi.UptDiyTableRowBatch, param, function (result) {
+            callback(result);
+        });
+    },
+    DelDiyDataListByWhere(param, callback) {
+        DiyCommon.Post(DiyApi.DelDiyDataListByWhere, param, function (result) {
+            callback(result);
+        });
+    },
+    UptDiyDataListByWhere(param, callback) {
+        DiyCommon.Post(DiyApi.UptDiyDataListByWhere, param, function (result) {
+            callback(result);
+        });
+    },
+    DelDiyTableRow(param, callback) {
+        DiyCommon.Post(DiyApi.DelDiyTableRow, param, function (result) {
+            callback(result);
+        });
+    },
+    DelDiyTableRowBatch(param, callback) {
+        DiyCommon.Post(DiyApi.DelDiyTableRowBatch, param, function (result) {
+            callback(result);
+        });
+    },
+    AddDiyTableRow(param, callback) {
+        DiyCommon.Post(DiyApi.AddDiyTableRow, param, function (result) {
+            callback(result);
+            // if (DiyCommon.Result(result)) {
+            //     callback(result.Data)
+            // }
+        });
+    },
+    AddDiyTableRowBatch(param, callback) {
+        DiyCommon.Post(DiyApi.AddDiyTableRowBatch, param, function (result) {
+            callback(result);
+            // if (DiyCommon.Result(result)) {
+            //     callback(result.Data)
+            // }
+        });
+    },
+    AddSysLog(param, callback) {
+        DiyCommon.Post("/api/SysLog/AddSysLog", param, function (result) {
+            // if (DiyCommon.Result(result)) {
+            if (result.Code == 1) {
+                if (callback) {
+                    callback(result.Data);
+                }
+            }
+        });
+    },
+    ConvertRowModel(rowModel) {
+        var newRowModel = {};
+        for (const key in rowModel) {
+            //2022-07-12发现：typeof(null)也是object，不能直接序列化，否则会赋值一个null字符串
+            if (!DiyCommon.IsNull(rowModel[key]) && typeof rowModel[key] == "object") {
+                newRowModel[key] = JSON.stringify(rowModel[key]);
+            } else {
+                newRowModel[key] = rowModel[key];
+            }
+        }
+        return newRowModel;
+    },
+    getToken() {
+        // 优先从 LocalStorageManager 获取，确保最新值
+        const token = LocalStorageManager.get("Token");
+        if (token) return token;
+        // 兼容 Cookie 存储
+        return getToken() || "";
+    },
+    setToken(token) {
+        // 1. 设置到 Cookie（用于跨标签页）
+        setToken(token);
+        // 2. 设置到 LocalStorageManager（统一存储）
+        LocalStorageManager.set("Token", token);
+        // 3. 同步更新 Pinia store（防止 persist 覆盖）
+        try {
+            const diyStore = useDiyStore(pinia);
+            diyStore.Token = token;
+        } catch (e) {
+            // Pinia 可能尚未初始化，忽略
+        }
+        return token;
+    },
+    removeToken() {
+        LocalStorageManager.remove("Token");
+        try {
+            const diyStore = useDiyStore(pinia);
+            diyStore.Token = "";
+        } catch (e) {}
+        return removeToken(); // 同时移除 Cookie
+    },
+    getTokenExpires() {
+        return LocalStorageManager.get("TokenExpires") || "";
+    },
+    //time：'2020-01-01 13:25:22'
+    setTokenExpires(time) {
+        LocalStorageManager.set("TokenExpires", time);
+        // 同步更新 Pinia store
+        try {
+            const diyStore = useDiyStore(pinia);
+            diyStore.TokenExpires = time;
+        } catch (e) {}
+        return time;
+    },
+    DiyTableStrToJson(data) {
+        var self = this;
+        if (DiyCommon.IsNull(data.Rules)) {
+            data.Rules = {};
+        } else {
+            data.Rules = JSON.parse(data.Rules);
+        }
+
+        if (DiyCommon.IsNull(data.ApiReplace)) {
+            data.ApiReplace = {
+                Insert: "",
+                Update: "",
+                Delete: "",
+                Select: ""
+            };
+        } else {
+            try {
+                data.ApiReplace = JSON.parse(data.ApiReplace);
+                if (DiyCommon.IsNull(data.ApiReplace.Select)) {
+                    data.ApiReplace.Select = "";
+                }
+            } catch (error) {
+                data.ApiReplace = {
+                    Insert: "",
+                    Update: "",
+                    Delete: "",
+                    Select: ""
+                };
+            }
+        }
+
+        if (DiyCommon.IsNull(data.RowAction)) {
+            data.RowAction = [];
+        } else {
+            data.RowAction = JSON.parse(data.RowAction);
+        }
+
+        if (DiyCommon.IsNull(data.Tabs)) {
+            data.Tabs = [
+                {
+                    Name: "none",
+                    EnName: "none",
+                    Display: true,
+                    Sort: 1
+                }
+            ];
+        } else {
+            var tabs = JSON.parse(data.Tabs);
+            //2026-02-05 Anderspn：修复老的错误数据
+            if(typeof tabs == "string"){
+                tabs = JSON.parse(tabs);
+            }
+            //默认让tabs显示
+            tabs.forEach((tab) => {
+                tab.Display = true;
+            });
+            if (tabs.length == 0) {
+                tabs.push({
+                    Name: "none",
+                    EnName: "none",
+                    Sort: 1
+                });
+            }
+            // 排序
+            tabs = _.sortBy(tabs, function (item) {
+                return item.Sort;
+            });
+            tabs.forEach((tab) => {
+                if (DiyCommon.IsNull(tab.Display)) {
+                    tab.Display = true;
+                }
+                if (!tab.Id) {
+                    tab.Id = DiyCommon.NewGuid();
+                }
+            });
+            data.Tabs = tabs;
+        }
+
+        if (DiyCommon.IsNull(data.BindRole)) {
+            data.BindRole = [];
+        } else {
+            data.BindRole = JSON.parse(data.BindRole);
+        }
+
+        //2025-3-19刘诚新增角色访问表单修改日志
+        if (DiyCommon.IsNull(data.DataLogRole)) {
+            data.DataLogRole = [];
+        } else {
+            data.DataLogRole = JSON.parse(data.DataLogRole);
+        }
+
+        if (DiyCommon.IsNull(data.TableTabs)) {
+            data.TableTabs = [];
+        } else {
+            var tabs = JSON.parse(data.TableTabs);
+            data.TableTabs = tabs;
+        }
+
+        if (DiyCommon.IsNull(data.FormOpenType)) {
+            data.FormOpenType = "Drawer";
+        }
+    }
+};
+// DiyCommon.OsClientInit();
+export { DiyCommon };
