@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Microi.net.Business</RootNamespace>
+    <AssemblyName>Microi.Business.Model</AssemblyName>
+    <Description>Microi吾码 - 业务底座共享模型层（实体基类、生命周期枚举、业务参数基类）</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Microi.Server\Microi.Core\Microi.Core.csproj" />
+  </ItemGroup>
+
+</Project>

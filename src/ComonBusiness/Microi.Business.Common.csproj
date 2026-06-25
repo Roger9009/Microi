@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Microi.net.Business.Common</RootNamespace>
+    <AssemblyName>Microi.Business.Common</AssemblyName>
+    <Description>Microi吾码 - 公共业务层：ERP/MES 共用的业务能力（单据编号、基类控制器等）</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PubilcModule\Microi.Business.Core.csproj" />
+  </ItemGroup>
+
+</Project>

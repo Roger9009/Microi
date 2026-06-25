@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>业务表结构 · Microi 业务底座</title>
+  <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+  <style>
+    html, body { margin: 0; height: 100%; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f5f7fa; }
+    #app { height: 100%; }
+    .topbar { display: flex; gap: 10px; align-items: center; padding: 10px 16px; background: #fff; border-bottom: 1px solid #ebeef5; }
+    .topbar .title { font-weight: 600; font-size: 16px; margin-right: 16px; color: #303133; }
+    .layout { display: flex; height: calc(100% - 57px); }
+    .sider { width: 280px; background: #fff; border-right: 1px solid #ebeef5; overflow: auto; }
+    .content { flex: 1; overflow: auto; padding: 16px; }
+    .doc-item { padding: 10px 14px; cursor: pointer; border-bottom: 1px solid #f0f0f0; }
+    .doc-item:hover { background: #f5f7fa; }
+    .doc-item.active { background: #ecf5ff; color: #409eff; }
+    .doc-item .sub { font-size: 12px; color: #909399; }
+    .table-card { margin-bottom: 16px; }
+    .role-tag { margin-left: 8px; }
+    .muted { color: #909399; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="topbar">
+      <span class="title">业务表结构</span>
+      <el-input v-model="osClient" placeholder="OsClient(租户,可空)" style="width:180px" size="small" />
+      <el-input v-model="token" placeholder="Authorization Token" style="width:360px" size="small" show-password />
+      <el-button type="primary" size="small" @click="loadDocuments">连接 / 刷新</el-button>
+      <span class="muted" style="font-size:12px">Token 会保存在本地浏览器</span>
+    </div>
+
+    <div class="layout">
+      <div class="sider">
+        <div v-for="d in documents" :key="d.MasterTable"
+             :class="['doc-item', { active: current && current.MasterTable === d.MasterTable }]"
+             @click="openDocument(d.MasterTable)">
+          <div>{{ d.Label }}
+            <el-tag v-if="!d.Exists" type="warning" size="small">未建表</el-tag>
+          </div>
+          <div class="sub">{{ d.MasterTable }} · 明细 {{ d.DetailCount }} · 扩展 {{ d.ExtensionCount }}</div>
+        </div>
+        <el-empty v-if="documents.length === 0" description="暂无文档，请先连接" :image-size="60" />
+      </div>
+
+      <div class="content" v-loading="loading">
+        <template v-if="schema">
+          <div style="margin-bottom:12px;display:flex;align-items:center;gap:12px">
+            <h2 style="margin:0">{{ schema.Label }} <span class="muted" style="font-size:13px">{{ schema.MasterTable }}</span></h2>
+            <el-button type="primary" @click="openAddField">+ 添加字段</el-button>
+          </div>
+
+          <table-block :info="schema.Master"></table-block>
+          <table-block v-for="t in schema.Details" :key="t.TableName" :info="t"></table-block>
+          <table-block v-for="t in schema.Extensions" :key="t.TableName" :info="t"></table-block>
+        </template>
+        <el-empty v-else description="请选择左侧文档查看结构" />
+      </div>
+    </div>
+
+    <!-- 添加字段对话框 -->
+    <el-dialog v-model="addVisible" title="添加字段" width="520px">
+      <el-form :model="form" label-width="92px">
+        <el-form-item label="合并到">
+          <el-select v-model="form.TargetTable" style="width:100%">
+            <el-option-group label="主表">
+              <el-option :label="schema.Master.Label + ' (' + schema.Master.TableName + ')'"
+                         :value="schema.Master.TableName" v-if="schema" />
+            </el-option-group>
+            <el-option-group label="明细表" v-if="schema && schema.Details.length">
+              <el-option v-for="t in schema.Details" :key="t.TableName"
+                         :label="t.Label + ' (' + t.TableName + ')'" :value="t.TableName" />
+            </el-option-group>
+            <el-option-group label="扩展表" v-if="schema && schema.Extensions.length">
+              <el-option v-for="t in schema.Extensions" :key="t.TableName"
+                         :label="t.Label + ' (' + t.TableName + ')'" :value="t.TableName" />
+            </el-option-group>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="字段名">
+          <el-input v-model="form.FieldName" placeholder="字母/数字/下划线，如 CustomCode" />
+        </el-form-item>
+        <el-form-item label="显示名">
+          <el-input v-model="form.Label" placeholder="字段注释" />
+        </el-form-item>
+        <el-form-item label="类型">
+          <el-select v-model="form.DataType" style="width:100%">
+            <el-option v-for="t in dataTypes" :key="t" :label="t" :value="t" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="长度" v-if="form.DataType === 'string'">
+          <el-input-number v-model="form.Length" :min="1" :max="8000" />
+        </el-form-item>
+        <el-form-item label="原始类型" v-if="form.DataType === 'raw'">
+          <el-input v-model="form.RawType" placeholder="如 decimal(18,2)" />
+        </el-form-item>
+        <el-form-item label="必填">
+          <el-switch v-model="form.NotNull" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="addVisible = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitAddField">确定</el-button>
+      </template>
+    </el-dialog>
+  </div>
+
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://unpkg.com/element-plus"></script>
+  <script>
+    const { createApp, ref, reactive } = Vue;
+
+    const TableBlock = {
+      props: ['info'],
+      template: `
+        <el-card class="table-card" shadow="never">
+          <template #header>
+            <b>{{ info.Label }}</b>
+            <span class="muted" style="font-size:12px"> {{ info.TableName }}</span>
+            <el-tag size="small" class="role-tag" :type="roleType">{{ roleText }}</el-tag>
+            <el-tag size="small" class="role-tag" v-if="info.ForeignKey" type="info">外键: {{ info.ForeignKey }}</el-tag>
+            <el-tag size="small" class="role-tag" v-if="!info.Exists" type="warning">未建表</el-tag>
+          </template>
+          <el-table :data="info.Columns" size="small" border>
+            <el-table-column prop="Name" label="字段名" width="200">
+              <template #default="s">
+                {{ s.row.Name }}
+                <el-tag v-if="s.row.IsPrimaryKey" size="small" type="danger">PK</el-tag>
+                <el-tag v-if="s.row.IsSystem" size="small" type="info">系统</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="ColumnType" label="类型" width="180" />
+            <el-table-column label="可空" width="70">
+              <template #default="s">{{ s.row.Nullable ? '是' : '否' }}</template>
+            </el-table-column>
+            <el-table-column prop="Comment" label="注释" />
+          </el-table>
+          <el-empty v-if="!info.Columns || info.Columns.length === 0" description="无列或表未创建" :image-size="50" />
+        </el-card>`,
+      computed: {
+        roleText() { return { 0: '主表', 1: '明细表', 2: '扩展表' }[this.info.Role]; },
+        roleType() { return { 0: 'primary', 1: 'success', 2: 'warning' }[this.info.Role] || 'info'; }
+      }
+    };
+
+    createApp({
+      components: { TableBlock },
+      setup() {
+        const token = ref(localStorage.getItem('microi_biz_token') || '');
+        const osClient = ref(localStorage.getItem('microi_biz_osclient') || '');
+        const documents = ref([]);
+        const schema = ref(null);
+        const current = ref(null);
+        const loading = ref(false);
+        const addVisible = ref(false);
+        const submitting = ref(false);
+        const dataTypes = ['string', 'text', 'int', 'long', 'decimal', 'double', 'bool', 'datetime', 'raw'];
+        const form = reactive({ TargetTable: '', FieldName: '', Label: '', DataType: 'string', Length: 255, RawType: '', NotNull: false });
+
+        async function api(action, body) {
+          const res = await fetch('/api/BusinessSchema/' + action, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': token.value },
+            body: JSON.stringify(Object.assign({ OsClient: osClient.value }, body || {}))
+          });
+          return await res.json();
+        }
+
+        async function loadDocuments() {
+          localStorage.setItem('microi_biz_token', token.value);
+          localStorage.setItem('microi_biz_osclient', osClient.value);
+          loading.value = true;
+          try {
+            const r = await api('GetDocuments');
+            if (r && r.Code === 1) { documents.value = r.Data || []; }
+            else { ElementPlus.ElMessage.error(r && r.Msg || '加载失败'); }
+          } catch (e) { ElementPlus.ElMessage.error('请求失败: ' + e.message); }
+          finally { loading.value = false; }
+        }
+
+        async function openDocument(masterTable) {
+          loading.value = true;
+          try {
+            const r = await api('GetDocumentSchema', { MasterTable: masterTable });
+            if (r && r.Code === 1) { schema.value = r.Data; current.value = r.Data; }
+            else { ElementPlus.ElMessage.error(r && r.Msg || '加载结构失败'); }
+          } finally { loading.value = false; }
+        }
+
+        function openAddField() {
+          if (!schema.value) return;
+          form.TargetTable = schema.value.Master.TableName;
+          form.FieldName = ''; form.Label = ''; form.DataType = 'string';
+          form.Length = 255; form.RawType = ''; form.NotNull = false;
+          addVisible.value = true;
+        }
+
+        async function submitAddField() {
+          if (!form.FieldName) { ElementPlus.ElMessage.warning('请输入字段名'); return; }
+          submitting.value = true;
+          try {
+            const r = await api('AddField', {
+              MasterTable: schema.value.MasterTable,
+              TargetTable: form.TargetTable,
+              FieldName: form.FieldName,
+              Label: form.Label,
+              DataType: form.DataType,
+              Length: form.Length,
+              RawType: form.RawType,
+              NotNull: form.NotNull
+            });
+            if (r && r.Code === 1) {
+              ElementPlus.ElMessage.success(r.Msg || '添加成功');
+              addVisible.value = false;
+              await openDocument(schema.value.MasterTable);
+            } else {
+              ElementPlus.ElMessage.error(r && r.Msg || '添加失败');
+            }
+          } finally { submitting.value = false; }
+        }
+
+        if (token.value) loadDocuments();
+
+        return { token, osClient, documents, schema, current, loading, addVisible, submitting,
+          dataTypes, form, loadDocuments, openDocument, openAddField, submitAddField };
+      }
+    }).use(ElementPlus).mount('#app');
+  </script>
+</body>
+</html>

@@ -136,4 +136,10 @@
       <GlobalPropertiesToRemove></GlobalPropertiesToRemove>
     </ProjectReference>
   </ItemGroup>
+
+  <!-- 业务底座模块（src/）：引用 ERP/MES 即可，Common/Core/Model 随依赖自动带入 -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ErpModule\Microi.Erp.csproj" />
+    <ProjectReference Include="..\..\src\MesModule\Microi.Mes.csproj" />
+  </ItemGroup>
 </Project>
