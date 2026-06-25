@@ -11,6 +11,7 @@ namespace Microi.net.Business.Common
     public class BusinessSchemaController : BusinessControllerBase
     {
         private readonly BusinessSchemaService _service = new BusinessSchemaService();
+        private readonly BusinessFieldConfigService _fieldConfigService = new BusinessFieldConfigService();
 
         /// <summary>列出所有业务文档（主表）。</summary>
         [HttpGet, HttpPost]
@@ -42,6 +43,30 @@ namespace Microi.net.Business.Common
         {
             await FillContext(param);
             return Json(_service.AddField(param));
+        }
+
+        /// <summary>获取某表已解析的字段定义（物理列 + 字段配置）。</summary>
+        [HttpGet, HttpPost]
+        public async Task<JsonResult> GetFieldConfigs(BusinessSchemaQueryParam param)
+        {
+            await FillContext(param);
+            return Json(await _fieldConfigService.GetResolvedFields(param.TableName, param.OsClient));
+        }
+
+        /// <summary>批量保存字段配置。</summary>
+        [HttpPost]
+        public async Task<JsonResult> SaveFieldConfigs(BusinessFieldConfigSaveParam param)
+        {
+            await FillContext(param);
+            return Json(await _fieldConfigService.SaveConfigs(param));
+        }
+
+        /// <summary>删除某字段的配置。</summary>
+        [HttpPost]
+        public async Task<JsonResult> DeleteFieldConfig(BusinessSchemaQueryParam param)
+        {
+            await FillContext(param);
+            return Json(await _fieldConfigService.DeleteConfig(param.TableName, param.FieldName, param.OsClient));
         }
     }
 }

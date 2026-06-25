@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>业务表结构 · Microi 业务底座</title>
+  <title>业务开发模块 · Microi 业务底座</title>
   <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
   <style>
     html, body { margin: 0; height: 100%; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f5f7fa; }
@@ -20,15 +20,18 @@
     .table-card { margin-bottom: 16px; }
     .role-tag { margin-left: 8px; }
     .muted { color: #909399; }
+    .field-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .field-form .full { grid-column: 1 / -1; }
   </style>
 </head>
 <body>
   <div id="app">
     <div class="topbar">
-      <span class="title">业务表结构</span>
+      <span class="title">业务开发模块</span>
       <el-input v-model="osClient" placeholder="OsClient(租户,可空)" style="width:180px" size="small" />
       <el-input v-model="token" placeholder="Authorization Token" style="width:360px" size="small" show-password />
       <el-button type="primary" size="small" @click="loadDocuments">连接 / 刷新</el-button>
+      <el-button size="small" @click="window.location.href='business-document.html'">单据保存</el-button>
       <span class="muted" style="font-size:12px">Token 会保存在本地浏览器</span>
     </div>
 
@@ -52,9 +55,9 @@
             <el-button type="primary" @click="openAddField">+ 添加字段</el-button>
           </div>
 
-          <table-block :info="schema.Master"></table-block>
-          <table-block v-for="t in schema.Details" :key="t.TableName" :info="t"></table-block>
-          <table-block v-for="t in schema.Extensions" :key="t.TableName" :info="t"></table-block>
+          <table-block :info="schema.Master" @config="openFieldConfig"></table-block>
+          <table-block v-for="t in schema.Details" :key="t.TableName" :info="t" @config="openFieldConfig"></table-block>
+          <table-block v-for="t in schema.Extensions" :key="t.TableName" :info="t" @config="openFieldConfig"></table-block>
         </template>
         <el-empty v-else description="请选择左侧文档查看结构" />
       </div>
@@ -105,6 +108,77 @@
         <el-button type="primary" :loading="submitting" @click="submitAddField">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 字段配置对话框 -->
+    <el-dialog v-model="configVisible" :title="'字段配置：' + (configTable && configTable.TableName)" width="1100px" top="5vh" :close-on-click-modal="false">
+      <div style="margin-bottom:10px">
+        <el-button type="primary" size="small" @click="addVirtualField">+ 新增虚拟字段</el-button>
+        <el-button type="success" size="small" :loading="configSaving" @click="saveFieldConfigs">保存全部变更</el-button>
+        <el-button size="small" @click="configVisible = false">关闭</el-button>
+      </div>
+      <el-table :data="fieldConfigs" size="small" border v-loading="configLoading" height="55vh">
+        <el-table-column prop="Name" label="字段名" width="160">
+          <template #default="s">
+            <el-input v-if="!s.row.PhysicalExists" v-model="s.row.Name" size="small" placeholder="新字段名" />
+            <span v-else>{{ s.row.Name }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="来源" width="90">
+          <template #default="s">{{ s.row.PhysicalExists ? '物理列' : (s.row.SourceType || 'Virtual') }}</template>
+        </el-table-column>
+        <el-table-column prop="DataType" label="物理类型" width="120" />
+        <el-table-column label="描述" width="140">
+          <template #default="s"><el-input v-model="s.row.Description" size="small" placeholder="显示名" /></template>
+        </el-table-column>
+        <el-table-column label="语言ID" width="120">
+          <template #default="s"><el-input v-model="s.row.LangId" size="small" placeholder="多语言Key" /></template>
+        </el-table-column>
+        <el-table-column label="逻辑类型" width="120">
+          <template #default="s">
+            <el-select v-model="s.row.FieldType" size="small" style="width:100%">
+              <el-option v-for="t in fieldTypes" :key="t" :label="t" :value="t" />
+            </el-select>
+          </template>
+        </el-table-column>
+        <el-table-column label="来源类型" width="120">
+          <template #default="s">
+            <el-select v-model="s.row.SourceType" size="small" style="width:100%">
+              <el-option v-for="t in sourceTypes" :key="t" :label="t" :value="t" />
+            </el-select>
+          </template>
+        </el-table-column>
+        <el-table-column label="组件" width="130">
+          <template #default="s">
+            <el-select v-model="s.row.Component" size="small" style="width:100%">
+              <el-option v-for="t in components" :key="t" :label="t" :value="t" />
+            </el-select>
+          </template>
+        </el-table-column>
+        <el-table-column label="排序" width="90">
+          <template #default="s"><el-input-number v-model="s.row.SortNo" size="small" :min="0" style="width:80px" /></template>
+        </el-table-column>
+        <el-table-column label="更新" width="70">
+          <template #default="s"><el-switch v-model="s.row.IsUpdate" /></template>
+        </el-table-column>
+        <el-table-column label="隐藏" width="70">
+          <template #default="s"><el-switch v-model="s.row.ForceHidden" /></template>
+        </el-table-column>
+        <el-table-column label="默认显示" width="80">
+          <template #default="s"><el-switch v-model="s.row.DefaultVisible" /></template>
+        </el-table-column>
+        <el-table-column label="必填" width="70">
+          <template #default="s"><el-switch v-model="s.row.Required" /></template>
+        </el-table-column>
+        <el-table-column label="主键" width="70">
+          <template #default="s"><el-switch v-model="s.row.IsPrimaryKey" /></template>
+        </el-table-column>
+        <el-table-column label="操作" width="90" fixed="right">
+          <template #default="s">
+            <el-button v-if="s.row.HasConfig || !s.row.PhysicalExists" type="danger" size="small" link @click="deleteFieldConfig(s.row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
   </div>
 
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
@@ -114,14 +188,20 @@
 
     const TableBlock = {
       props: ['info'],
+      emits: ['config'],
       template: `
         <el-card class="table-card" shadow="never">
           <template #header>
-            <b>{{ info.Label }}</b>
-            <span class="muted" style="font-size:12px"> {{ info.TableName }}</span>
-            <el-tag size="small" class="role-tag" :type="roleType">{{ roleText }}</el-tag>
-            <el-tag size="small" class="role-tag" v-if="info.ForeignKey" type="info">外键: {{ info.ForeignKey }}</el-tag>
-            <el-tag size="small" class="role-tag" v-if="!info.Exists" type="warning">未建表</el-tag>
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <b>{{ info.Label }}</b>
+                <span class="muted" style="font-size:12px"> {{ info.TableName }}</span>
+                <el-tag size="small" class="role-tag" :type="roleType">{{ roleText }}</el-tag>
+                <el-tag size="small" class="role-tag" v-if="info.ForeignKey" type="info">外键: {{ info.ForeignKey }}</el-tag>
+                <el-tag size="small" class="role-tag" v-if="!info.Exists" type="warning">未建表</el-tag>
+              </div>
+              <el-button size="small" @click="$emit('config', info)">字段配置</el-button>
+            </div>
           </template>
           <el-table :data="info.Columns" size="small" border>
             <el-table-column prop="Name" label="字段名" width="200">
@@ -158,6 +238,14 @@
         const submitting = ref(false);
         const dataTypes = ['string', 'text', 'int', 'long', 'decimal', 'double', 'bool', 'datetime', 'raw'];
         const form = reactive({ TargetTable: '', FieldName: '', Label: '', DataType: 'string', Length: 255, RawType: '', NotNull: false });
+        const fieldTypes = ['string', 'text', 'int', 'long', 'decimal', 'double', 'bool', 'datetime', 'raw'];
+        const sourceTypes = ['Physical', 'Virtual', 'Relation', 'Formula'];
+        const components = ['Text', 'Textarea', 'NumberText', 'Select', 'MultiSelect', 'DatePicker', 'DateTimePicker', 'Switch', 'Radio', 'Checkbox', 'Upload', 'Editor'];
+        const configVisible = ref(false);
+        const configLoading = ref(false);
+        const configSaving = ref(false);
+        const configTable = ref(null);
+        const fieldConfigs = ref([]);
 
         async function api(action, body) {
           const res = await fetch('/api/BusinessSchema/' + action, {
@@ -221,10 +309,84 @@
           } finally { submitting.value = false; }
         }
 
+        async function openFieldConfig(info) {
+          configTable.value = info;
+          configVisible.value = true;
+          configLoading.value = true;
+          try {
+            const r = await api('GetFieldConfigs', { TableName: info.TableName });
+            if (r && r.Code === 1) {
+              fieldConfigs.value = (r.Data || []).map(x => ({ ...x }));
+            } else {
+              ElementPlus.ElMessage.error(r && r.Msg || '加载字段配置失败');
+            }
+          } catch (e) { ElementPlus.ElMessage.error('请求失败: ' + e.message); }
+          finally { configLoading.value = false; }
+        }
+
+        function addVirtualField() {
+          fieldConfigs.value.push({
+            Name: '', PhysicalExists: false, DataType: '', ColumnType: '', PhysicalComment: '', IsSystem: false,
+            ConfigId: '', HasConfig: true, Description: '', LangId: '', FieldType: 'string', SourceType: 'Virtual',
+            Component: 'Text', IsPrimaryKey: false, IsUpdate: true, ForceHidden: false, DefaultVisible: true, Required: false, SortNo: 0
+          });
+        }
+
+        async function saveFieldConfigs() {
+          const tableName = configTable.value && configTable.value.TableName;
+          if (!tableName) return;
+          const fields = fieldConfigs.value.map(x => ({
+            FieldName: x.Name,
+            Description: x.Description,
+            LangId: x.LangId,
+            FieldType: x.FieldType,
+            SourceType: x.SourceType,
+            Component: x.Component,
+            IsPrimaryKey: !!x.IsPrimaryKey,
+            IsUpdate: !!x.IsUpdate,
+            ForceHidden: !!x.ForceHidden,
+            DefaultVisible: !!x.DefaultVisible,
+            Required: !!x.Required,
+            SortNo: x.SortNo || 0
+          })).filter(x => x.FieldName);
+
+          if (fields.length === 0) { ElementPlus.ElMessage.warning('没有可保存的字段'); return; }
+          configSaving.value = true;
+          try {
+            const r = await api('SaveFieldConfigs', { TableName: tableName, Fields: fields });
+            if (r && r.Code === 1) {
+              ElementPlus.ElMessage.success(r.Msg || '保存成功');
+              await openFieldConfig(configTable.value);
+            } else {
+              ElementPlus.ElMessage.error(r && r.Msg || '保存失败');
+            }
+          } catch (e) { ElementPlus.ElMessage.error('请求失败: ' + e.message); }
+          finally { configSaving.value = false; }
+        }
+
+        async function deleteFieldConfig(row) {
+          const tableName = configTable.value && configTable.value.TableName;
+          if (!tableName || !row.Name) return;
+          if (row.PhysicalExists) {
+            const r = await api('DeleteFieldConfig', { TableName: tableName, FieldName: row.Name });
+            if (r && r.Code === 1) {
+              ElementPlus.ElMessage.success(r.Msg || '删除成功');
+              await openFieldConfig(configTable.value);
+            } else {
+              ElementPlus.ElMessage.error(r && r.Msg || '删除失败');
+            }
+          } else {
+            const idx = fieldConfigs.value.indexOf(row);
+            if (idx >= 0) fieldConfigs.value.splice(idx, 1);
+          }
+        }
+
         if (token.value) loadDocuments();
 
         return { token, osClient, documents, schema, current, loading, addVisible, submitting,
-          dataTypes, form, loadDocuments, openDocument, openAddField, submitAddField };
+          dataTypes, form, fieldTypes, sourceTypes, components,
+          configVisible, configLoading, configSaving, configTable, fieldConfigs,
+          loadDocuments, openDocument, openAddField, submitAddField, openFieldConfig, addVirtualField, saveFieldConfigs, deleteFieldConfig };
       }
     }).use(ElementPlus).mount('#app');
   </script>

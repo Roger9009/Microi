@@ -123,6 +123,92 @@ namespace Microi.net.Business
 
         #endregion
 
+        #region 主细扩展表保存
+
+        /// <summary>
+        /// 保存业务文档（主单 + 扩展表 + 明细表）。
+        /// 入参为完整 JSON，可包含扩展字段及明细集合（如 Items[]）。
+        /// 主单保存会走 AddAsync/UptAsync 及其生命周期钩子（如生成单据号、状态初始化）；
+        /// 保存成功后，再同步扩展表与明细表。
+        /// 需重写 <see cref="EntityType"/> 以识别关系特性。
+        /// </summary>
+        public virtual async Task<DosResult> SaveWithRelationsAsync(JObject masterData, string osClient, DbTrans trans = null)
+        {
+            if (EntityType == null)
+                return new DosResult(0, null, $"[{GetType().Name}] 未重写 EntityType，无法保存关联表。");
+            if (masterData == null)
+                return new DosResult(0, null, "主单数据不能为空。");
+
+            var client = OsClientExtend.GetClient(osClient);
+            if (client?.Db == null)
+                return new DosResult(0, null, $"租户[{osClient}]数据库会话不可用。");
+
+            var check = await OnBeforeSaveWithRelationsAsync(masterData, osClient);
+            if (check != null && check.Code != 1) return check;
+
+            var ownTrans = trans == null;
+            if (ownTrans)
+                trans = client.Db.BeginTransaction();
+
+            try
+            {
+                masterData["OsClient"] = osClient;
+                var param = masterData.ToObject<TParam>();
+                if (param == null) param = Activator.CreateInstance<TParam>();
+                param.OsClient = osClient;
+
+                var id = masterData["Id"]?.ToString();
+                var isNew = string.IsNullOrWhiteSpace(id);
+
+                DosResult masterResult;
+                if (isNew)
+                {
+                    masterResult = await AddAsync(param, trans);
+                }
+                else
+                {
+                    masterResult = await UptAsync(param, trans);
+                }
+
+                if (masterResult == null || masterResult.Code != 1)
+                {
+                    if (ownTrans) trans.Rollback();
+                    return masterResult ?? new DosResult(0, null, "主单保存失败。");
+                }
+
+                var masterObj = masterResult.Data as JObject ?? JObject.FromObject(masterResult.Data);
+                id = masterObj["Id"]?.ToString() ?? id;
+                if (string.IsNullOrWhiteSpace(id))
+                {
+                    if (ownTrans) trans.Rollback();
+                    return new DosResult(0, null, "主单保存后未返回 Id。");
+                }
+
+                masterData["Id"] = id;
+                var relationsResult = await BusinessDocumentWriter.SaveRelationsAsync(masterData, EntityType, TableKey, osClient, trans);
+                if (relationsResult != null && relationsResult.Code != 1)
+                {
+                    if (ownTrans) trans.Rollback();
+                    return relationsResult;
+                }
+
+                if (ownTrans) trans.Commit();
+                await OnAfterSaveWithRelationsAsync(masterData, osClient, masterResult);
+                return masterResult;
+            }
+            catch (Exception ex)
+            {
+                if (ownTrans) trans.Rollback();
+                return new DosResult(0, null, $"保存业务文档异常：{ex.Message}");
+            }
+            finally
+            {
+                if (ownTrans) trans?.Close();
+            }
+        }
+
+        #endregion
+
         /// <summary>
         /// 依据字段配置，将「不参与更新」的字段并入 param._NotSaveField，使其在更新时被忽略。
         /// </summary>
@@ -164,6 +250,12 @@ namespace Microi.net.Business
 
         /// <summary>删除后。</summary>
         protected virtual Task OnAfterDelAsync(TParam param, DosResult result) => Task.CompletedTask;
+
+        /// <summary>保存主细扩展表前。返回非 null 且 Code!=1 的结果可中止保存。</summary>
+        protected virtual Task<DosResult> OnBeforeSaveWithRelationsAsync(JObject masterData, string osClient) => Task.FromResult<DosResult>(null);
+
+        /// <summary>保存主细扩展表后。</summary>
+        protected virtual Task OnAfterSaveWithRelationsAsync(JObject masterData, string osClient, DosResult result) => Task.CompletedTask;
 
         #endregion
     }

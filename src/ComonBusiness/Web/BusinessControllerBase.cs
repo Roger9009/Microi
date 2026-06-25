@@ -2,6 +2,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Mvc;
+using Newtonsoft.Json.Linq;
 
 namespace Microi.net.Business.Common
 {
@@ -26,9 +27,19 @@ namespace Microi.net.Business.Common
         protected async Task FillContext(BusinessParam param)
         {
             if (param == null) return;
-            var current = await DiyToken.GetCurrentToken();
+            var current = await GetCurrentContext();
             param._CurrentUser = current.CurrentUser;
             param.OsClient = current.OsClient;
+        }
+
+        /// <summary>
+        /// 获取当前 Token 中的租户与用户信息。
+        /// 当 Action 入参不是 BusinessParam（如直接使用 JObject）时，可单独调用此方法来获取上下文。
+        /// </summary>
+        protected async Task<(string OsClient, JObject CurrentUser)> GetCurrentContext()
+        {
+            var current = await DiyToken.GetCurrentToken();
+            return (current.OsClient, current.CurrentUser);
         }
     }
 }

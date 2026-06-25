@@ -57,6 +57,13 @@ protected override void ConfigureStateMachine(BusinessStateMachine<JObject, Sale
 
 `AddAsync/UptAsync/DelAsync/GetListAsync` 内置 `OnBeforeXxx/OnAfterXxx` 钩子（类似表单 V8 事件），子类按需重写。底层复用平台 `MicroiEngine.FormEngine`。
 
+重写 `EntityType` 后，可调用 `SaveWithRelationsAsync(JObject masterData, string osClient)`：
+- 主单按 `Id` 是否存在自动 insert/update；
+- 一对一扩展表按同 `Id` upsert；
+- 一对多明细表按传入集合做 insert/update/delete 同步。
+
+对应控制器示例：`api/SalesOrder/Save`，入参为完整 JSON（含 `Items` 明细与扩展字段）。
+
 ## 接入到主站点（`Microi.net.Api`）
 
 ### 步骤 1：在 `Microi.net.Api.csproj` 增加项目引用
@@ -174,7 +181,8 @@ protected override Type EntityType => typeof(SalesOrder);
 - 顶部填入 `Authorization Token`（与 `OsClient`），即可：
   - 左侧列出所有业务文档（主表）；
   - 右侧查看主/明细/扩展表的实时列结构；
-  - 「添加字段」可选择**合并到主表 / 某明细表 / 扩展表**，提交即通过平台多方言 DDL 真实加列（幂等）。
+  - 「添加字段」可选择**合并到主表 / 某明细表 / 扩展表**，提交即通过平台多方言 DDL 真实加列（幂等）；
+  - 「字段配置」可为每个表配置字段描述、语言 ID、逻辑类型、来源类型、组件、是否更新、强制隐藏、默认显示、必填、排序等，同时支持新增虚拟字段。
 
 ### 结构 API（`api/BusinessSchema/*`）
 
@@ -184,6 +192,22 @@ protected override Type EntityType => typeof(SalesOrder);
 | `GetDocumentSchema` | 入参 `MasterTable`，返回主+明细+扩展的完整结构与列 |
 | `GetTableColumns` | 入参 `TableName`，返回单表列结构 |
 | `AddField` | 入参 `MasterTable/TargetTable/FieldName/DataType/Length/RawType/NotNull/Label`，向目标表加列 |
+| `GetFieldConfigs` | 入参 `TableName`，返回物理列 + 字段配置合并后的已解析字段 |
+| `SaveFieldConfigs` | 入参 `TableName` + `Fields[]`，批量保存字段配置（按 `TableName+FieldName` upsert） |
+| `DeleteFieldConfig` | 入参 `TableName` + `FieldName`，删除某字段配置 |
+
+### 单据保存示例（前端页面）
+
+- 页面：`http://<站点>/business-document.html`（自包含，Vue3 + Element Plus CDN）。
+- 选择业务模块（SalesOrder / WorkOrder）、输入单据 Id（留空为新增），即可：
+  - 通过 `GetModelWithRelations` 加载主单 + 扩展字段 + 明细 Items；
+  - 编辑主单字段、扩展字段、增删明细行；
+  - 调用 `api/SalesOrder/Save` 或 `api/WorkOrder/Save` 完成主-细-扩展表一并落库。
+- 保存后端默认开启事务：主单与关系表要么全部成功，要么全部回滚。
+
+### 字段配置与更新时忽略字段
+
+`BusinessServiceBase.UptAsync` 默认启用 `EnforceFieldConfigOnUpt=true`，更新前会自动读取 `business_field_config` 中 `IsUpdate=false` 的字段，并加入 `param._NotSaveField`，使这些字段不会被更新。`BusinessParam._NotSaveField` 已对外开放，业务服务也可手动追加。
 
 `DataType` 预设：`string/text/int/long/decimal/double/bool/datetime/raw`（`raw` 用 `RawType` 指定原始 SQL 类型）。
 

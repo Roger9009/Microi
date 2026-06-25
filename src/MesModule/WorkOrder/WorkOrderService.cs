@@ -14,6 +14,9 @@ namespace Microi.net.Mes
     {
         protected override string TableKey => "mes_work_order";
 
+        /// <summary>主表实体类型，启用扩展表合并与明细加载/保存。</summary>
+        protected override Type EntityType => typeof(WorkOrder);
+
         protected override void ConfigureStateMachine(BusinessStateMachine<JObject, WorkOrderStatus> sm)
         {
             sm

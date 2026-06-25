@@ -1,6 +1,7 @@
 using System.Threading.Tasks;
 using Microi.net.Business.Common;
 using Microsoft.AspNetCore.Mvc;
+using Newtonsoft.Json.Linq;
 
 namespace Microi.net.Mes
 {
@@ -50,6 +51,18 @@ namespace Microi.net.Mes
         {
             await FillContext(param);
             return Json(await _service.DelAsync(param));
+        }
+
+        /// <summary>
+        /// 保存生产工单（主单 + 扩展表 + 明细）。
+        /// 入参为完整 JSON：{ Id, BillNo, ProductId, ...扩展字段, Items: [{...}] }
+        /// </summary>
+        [HttpPost]
+        public async Task<JsonResult> Save([FromBody] JObject data)
+        {
+            var ctx = await GetCurrentContext();
+            data["OsClient"] = ctx.OsClient;
+            return Json(await _service.SaveWithRelationsAsync(data, ctx.OsClient));
         }
 
         /// <summary>

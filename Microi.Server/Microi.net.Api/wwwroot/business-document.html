@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>业务单据保存 · Microi 业务底座</title>
+  <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+  <style>
+    html, body { margin: 0; height: 100%; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f5f7fa; }
+    #app { height: 100%; padding: 16px; box-sizing: border-box; }
+    .topbar { display: flex; gap: 10px; align-items: center; padding-bottom: 16px; border-bottom: 1px solid #ebeef5; margin-bottom: 16px; }
+    .topbar .title { font-weight: 600; font-size: 16px; margin-right: 16px; color: #303133; }
+    .muted { color: #909399; }
+    .form-card { margin-bottom: 16px; }
+    .detail-card { margin-bottom: 16px; }
+    .detail-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="topbar">
+      <span class="title">业务单据保存</span>
+      <el-input v-model="osClient" placeholder="OsClient" style="width:180px" size="small" />
+      <el-input v-model="token" placeholder="Authorization Token" style="width:360px" size="small" show-password />
+      <el-select v-model="controller" placeholder="业务模块" style="width:160px" size="small">
+        <el-option label="销售订单" value="SalesOrder" />
+        <el-option label="生产工单" value="WorkOrder" />
+      </el-select>
+      <el-input v-model="docId" placeholder="Id（留空为新增）" style="width:180px" size="small" />
+      <el-button type="primary" size="small" :loading="loading" @click="loadDocument">加载</el-button>
+      <el-button type="success" size="small" :loading="saving" @click="saveDocument">保存</el-button>
+    </div>
+
+    <el-alert v-if="message" :title="message" :type="messageType" closable @close="message = ''" style="margin-bottom:16px" />
+
+    <el-card class="form-card" shadow="never">
+      <template #header><b>主单信息</b></template>
+      <el-form :model="form" label-width="120px" size="small">
+        <el-form-item label="Id"><el-input v-model="form.Id" disabled /></el-form-item>
+        <el-form-item label="客户" v-if="controller === 'SalesOrder'">
+          <el-input v-model="form.CustomerId" placeholder="客户 Id" />
+        </el-form-item>
+        <el-form-item label="客户名称" v-if="controller === 'SalesOrder'">
+          <el-input v-model="form.CustomerName" placeholder="客户名称" />
+        </el-form-item>
+        <el-form-item label="订单金额" v-if="controller === 'SalesOrder'">
+          <el-input-number v-model="form.TotalAmount" :min="0" :precision="2" />
+        </el-form-item>
+        <el-form-item label="产品" v-if="controller === 'WorkOrder'">
+          <el-input v-model="form.ProductId" placeholder="产品 Id" />
+        </el-form-item>
+        <el-form-item label="产品名称" v-if="controller === 'WorkOrder'">
+          <el-input v-model="form.ProductName" placeholder="产品名称" />
+        </el-form-item>
+        <el-form-item label="计划数量" v-if="controller === 'WorkOrder'">
+          <el-input-number v-model="form.PlanQty" :min="0" :precision="2" />
+        </el-form-item>
+        <el-form-item label="扩展字段示例">
+          <el-input v-model="form.ExtRemark" placeholder="如 SalesOrderExt.Remark" />
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <el-card class="detail-card" shadow="never" v-if="controller === 'SalesOrder'">
+      <template #header>
+        <div class="detail-header">
+          <b>明细 Items</b>
+          <el-button type="primary" size="small" @click="addItem">+ 添加明细</el-button>
+        </div>
+      </template>
+      <el-table :data="items" size="small" border>
+        <el-table-column type="index" width="50" />
+        <el-table-column label="产品 Id" width="180">
+          <template #default="s"><el-input v-model="s.row.ProductId" size="small" /></template>
+        </el-table-column>
+        <el-table-column label="产品名称" width="180">
+          <template #default="s"><el-input v-model="s.row.ProductName" size="small" /></template>
+        </el-table-column>
+        <el-table-column label="数量" width="120">
+          <template #default="s"><el-input-number v-model="s.row.Qty" size="small" :min="0" :precision="2" /></template>
+        </el-table-column>
+        <el-table-column label="单价" width="120">
+          <template #default="s"><el-input-number v-model="s.row.Price" size="small" :min="0" :precision="2" /></template>
+        </el-table-column>
+        <el-table-column label="金额" width="120">
+          <template #default="s">{{ (s.row.Qty || 0) * (s.row.Price || 0) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="80">
+          <template #default="s">
+            <el-button type="danger" size="small" link @click="removeItem(s.$index)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="items.length === 0" description="暂无明细" :image-size="50" />
+    </el-card>
+
+    <el-card shadow="never" v-if="result">
+      <template #header><b>保存结果</b></template>
+      <pre style="background:#f5f7fa;padding:10px;border-radius:4px;overflow:auto">{{ JSON.stringify(result, null, 2) }}</pre>
+    </el-card>
+  </div>
+
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://unpkg.com/element-plus"></script>
+  <script>
+    const { createApp, ref, reactive } = Vue;
+
+    createApp({
+      setup() {
+        const token = ref(localStorage.getItem('microi_biz_token') || '');
+        const osClient = ref(localStorage.getItem('microi_biz_osclient') || '');
+        const controller = ref('SalesOrder');
+        const docId = ref('');
+        const loading = ref(false);
+        const saving = ref(false);
+        const message = ref('');
+        const messageType = ref('info');
+        const result = ref(null);
+
+        const form = reactive({ Id: '', CustomerId: '', CustomerName: '', TotalAmount: 0, ProductId: '', ProductName: '', PlanQty: 0, ExtRemark: '' });
+        const items = ref([]);
+
+        async function api(action, body) {
+          const res = await fetch('/api/' + controller.value + '/' + action, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': token.value },
+            body: JSON.stringify(Object.assign({ OsClient: osClient.value }, body || {}))
+          });
+          return await res.json();
+        }
+
+        async function loadDocument() {
+          localStorage.setItem('microi_biz_token', token.value);
+          localStorage.setItem('microi_biz_osclient', osClient.value);
+          if (!docId.value) { message.value = '请输入 Id 或留空以新增'; messageType.value = 'warning'; return; }
+          loading.value = true;
+          try {
+            const r = await api('GetModelWithRelations', { Id: docId.value });
+            if (r && r.Code === 1) {
+              const d = r.Data || {};
+              form.Id = d.Id || '';
+              form.CustomerId = d.CustomerId || '';
+              form.CustomerName = d.CustomerName || '';
+              form.TotalAmount = d.TotalAmount || 0;
+              form.ProductId = d.ProductId || '';
+              form.ProductName = d.ProductName || '';
+              form.PlanQty = d.PlanQty || 0;
+              form.ExtRemark = d.Remark || '';
+              items.value = (d.Items || []).map(x => ({ ...x }));
+              result.value = r;
+              message.value = '加载成功';
+              messageType.value = 'success';
+            } else {
+              message.value = r && r.Msg || '加载失败';
+              messageType.value = 'error';
+            }
+          } catch (e) { message.value = '请求失败: ' + e.message; messageType.value = 'error'; }
+          finally { loading.value = false; }
+        }
+
+        function addItem() {
+          items.value.push({ Id: '', ProductId: '', ProductName: '', Qty: 1, Price: 0 });
+        }
+
+        function removeItem(idx) {
+          items.value.splice(idx, 1);
+        }
+
+        async function saveDocument() {
+          localStorage.setItem('microi_biz_token', token.value);
+          localStorage.setItem('microi_biz_osclient', osClient.value);
+          saving.value = true;
+          try {
+            const payload = { Id: form.Id };
+            if (controller.value === 'SalesOrder') {
+              Object.assign(payload, {
+                CustomerId: form.CustomerId,
+                CustomerName: form.CustomerName,
+                TotalAmount: form.TotalAmount,
+                Remark: form.ExtRemark,
+                Items: items.value
+              });
+            } else {
+              Object.assign(payload, {
+                ProductId: form.ProductId,
+                ProductName: form.ProductName,
+                PlanQty: form.PlanQty,
+                Remark: form.ExtRemark
+              });
+            }
+            const r = await api('Save', payload);
+            result.value = r;
+            if (r && r.Code === 1) {
+              message.value = r.Msg || '保存成功';
+              messageType.value = 'success';
+              if (controller.value === 'SalesOrder' && r.Data && r.Data.Id) {
+                form.Id = r.Data.Id;
+                docId.value = r.Data.Id;
+              }
+            } else {
+              message.value = r && r.Msg || '保存失败';
+              messageType.value = 'error';
+            }
+          } catch (e) { message.value = '请求失败: ' + e.message; messageType.value = 'error'; }
+          finally { saving.value = false; }
+        }
+
+        return { token, osClient, controller, docId, loading, saving, message, messageType, result, form, items, loadDocument, addItem, removeItem, saveDocument };
+      }
+    }).use(ElementPlus).mount('#app');
+  </script>
+</body>
+</html>
