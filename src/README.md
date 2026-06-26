@@ -175,26 +175,58 @@ protected override Type EntityType => typeof(SalesOrder);
 // 控制器：api/SalesOrder/GetModelWithRelations  →  返回含 Items[] 与扩展字段的主单
 ```
 
+### 动态关系绑定（无需改 C# 代码）
+
+除代码特性外，还可通过前端 **直接新建扩展表/明细表并绑定到主单**，关系持久化到 `business_doc_relation` 表。
+
+两种来源**自动合并**：`GetDocumentSchema`、保存关系、级联删除均同时处理静态（代码特性）和动态（DB 记录）关系，互不干扰。
+
+```js
+// 前端调用示例：绑定扩展表
+POST api/BusinessSchema/BindRelation
+{ "MasterTable": "erp_sales_order", "RelationTable": "erp_sales_order_invoice",
+  "RelationType": "Extension", "Label": "发票信息" }
+
+// 绑定明细表
+POST api/BusinessSchema/BindRelation
+{ "MasterTable": "erp_sales_order", "RelationTable": "erp_sales_fee_item",
+  "RelationType": "Detail", "ForeignKey": "OrderId", "PropertyName": "FeeItems", "Label": "费用明细" }
+
+// 解绑（使用 GetDocumentSchema 返回的 RelationId）
+POST api/BusinessSchema/UnbindRelation
+{ "RelationId": "xxx", "MasterTable": "erp_sales_order" }
+```
+
 ### 结构查看 + 动态加字段（前端页面）
 
-- 页面：`http://<站点>/business-schema.html`（自包含，Vue3 + Element Plus CDN）。
-- 顶部填入 `Authorization Token`（与 `OsClient`），即可：
-  - 左侧列出所有业务文档（主表）；
-  - 右侧查看主/明细/扩展表的实时列结构；
-  - 「添加字段」可选择**合并到主表 / 某明细表 / 扩展表**，提交即通过平台多方言 DDL 真实加列（幂等）；
-  - 「字段配置」可为每个表配置字段描述、语言 ID、逻辑类型、来源类型、组件、是否更新、强制隐藏、默认显示、必填、排序等，同时支持新增虚拟字段。
+管理入口三个页面均为**纯静态 HTML**（Vue3 + Element Plus CDN），零构建直接部署到 `wwwroot` 使用：
+
+| 页面 | 地址 | 功能 |
+|------|------|------|
+| 🔐 登录页 | `/business-login.html` | bizadmin 独立登录（默认密码 `Admin@123`）、在线改密 |
+| 🗂️ 结构管理 | `/business-schema.html` | 查看结构、加字段、**新建/绑定/解绑关联表**、字段配置（含导出/导入） |
+| 📄 单据保存 | `/business-document.html` | 动态加载表单，新增/编辑含关联表的完整单据 |
+
+访问 `business-schema.html` 时：
+- 若已通过 `business-login.html` 登录（bizadmin），Token 会从 localStorage 自动读取，无需再手填；
+- 动态绑定的关联表会显示「**动态绑定**」Tag，并提供「**解绑**」按钮（静态关系不可解绑）；
+- 「**+ 新建/绑定关联表**」按钮可直接在前端创建扩展表或明细表并绑定到当前文档。
 
 ### 结构 API（`api/BusinessSchema/*`）
 
 | Action | 说明 |
 |--------|------|
 | `GetDocuments` | 列出所有业务文档（主表） |
-| `GetDocumentSchema` | 入参 `MasterTable`，返回主+明细+扩展的完整结构与列 |
+| `GetDocumentSchema` | 入参 `MasterTable`，返回主+明细+扩展（含动态关系）的完整结构与列；`BusinessTableInfo.IsDynamic=true` 表示动态绑定 |
 | `GetTableColumns` | 入参 `TableName`，返回单表列结构 |
 | `AddField` | 入参 `MasterTable/TargetTable/FieldName/DataType/Length/RawType/NotNull/Label`，向目标表加列 |
 | `GetFieldConfigs` | 入参 `TableName`，返回物理列 + 字段配置合并后的已解析字段 |
 | `SaveFieldConfigs` | 入参 `TableName` + `Fields[]`，批量保存字段配置（按 `TableName+FieldName` upsert） |
 | `DeleteFieldConfig` | 入参 `TableName` + `FieldName`，删除某字段配置 |
+| `ExportFieldConfigs` | 入参 `TableName`，导出字段配置 JSON（可跨环境迁移） |
+| `ImportFieldConfigs` | 入参 `TableName` + `Configs[]`，按 `TableName+FieldName` upsert 导入字段配置 |
+| **`BindRelation`** | 入参 `MasterTable/RelationTable/RelationType(Extension\|Detail)/ForeignKey/PropertyName/Label`，动态绑定关联表到主文档 |
+| **`UnbindRelation`** | 入参 `RelationId`（`business_doc_relation.Id`）+ `MasterTable`，解除动态关系绑定 |
 
 ### 单据保存示例（前端页面）
 
@@ -210,6 +242,44 @@ protected override Type EntityType => typeof(SalesOrder);
 `BusinessServiceBase.UptAsync` 默认启用 `EnforceFieldConfigOnUpt=true`，更新前会自动读取 `business_field_config` 中 `IsUpdate=false` 的字段，并加入 `param._NotSaveField`，使这些字段不会被更新。`BusinessParam._NotSaveField` 已对外开放，业务服务也可手动追加。
 
 `DataType` 预设：`string/text/int/long/decimal/double/bool/datetime/raw`（`raw` 用 `RawType` 指定原始 SQL 类型）。
+
+### 字段配置导出 / 导入
+
+```js
+// 导出（在迁移前备份）
+GET api/BusinessSchema/ExportFieldConfigs?TableName=erp_sales_order&OsClient=demo
+// → { Code:1, Data: [ { TableName, FieldName, Label, Component, ... } ] }
+
+// 导入（在目标环境执行）
+POST api/BusinessSchema/ImportFieldConfigs
+{ "TableName": "erp_sales_order", "Configs": [ ... ], "OsClient": "demo" }
+```
+
+### 登录鉴权 API（`api/BusinessAuth/*`）
+
+| Action | 说明 |
+|--------|------|
+| `Login` | `{ OsClient, Username("bizadmin"), Password }` → `{ Token }` |
+| `Verify` | `{ OsClient, Token }` → `{ Code:1 }` 有效 / `{ Code:0 }` 过期 |
+| `SetPassword` | `{ OsClient, Token, OldPassword, NewPassword }` → 修改密码 |
+| `Logout` | `{ OsClient, Token }` → Token 立即失效 |
+
+> 账号体系：密码 SHA256 哈希存 Redis Hash `Microi:{osClient}:BizAdmin`；Token 以 Unix 时间戳为过期标记，24h 自动失效；支持多租户（OsClient 隔离）。
+
+### 动态关系表（`business_doc_relation`）
+
+由框架启动时自动建表，字段说明：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `MasterTable` | varchar | 主表名（如 `erp_sales_order`） |
+| `RelationTable` | varchar | 关联表名 |
+| `RelationType` | varchar | `Extension`（1:1）/ `Detail`（1:N） |
+| `ForeignKey` | varchar | 明细表外键列名（Detail 时有值） |
+| `PropertyName` | varchar | JSON 集合属性名（Detail 时有值） |
+| `Label` | varchar | 显示名称 |
+
+---
 
 ## 新增一个业务模块（如 WMS）
 

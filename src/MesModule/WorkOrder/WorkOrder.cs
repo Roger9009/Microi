@@ -8,6 +8,8 @@ namespace Microi.net.Mes
     /// 启动时由 Schema 初始化器自动建表/补列。
     /// </summary>
     [BusinessTable("mes_work_order", Comment = "MES-生产工单")]
+    [BusinessExtensionTable(typeof(WorkOrderExt))]
+    [BusinessDetailTable(typeof(WorkOrderItem), "WorkOrderId", PropertyName = "Items")]
     public class WorkOrder : BusinessStatefulEntity<WorkOrderStatus>
     {
         /// <summary>关联销售订单 Id（与 ERP 联动，可选）</summary>

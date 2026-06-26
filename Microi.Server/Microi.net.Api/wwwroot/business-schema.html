@@ -27,12 +27,16 @@
 <body>
   <div id="app">
     <div class="topbar">
-      <span class="title">业务开发模块</span>
-      <el-input v-model="osClient" placeholder="OsClient(租户,可空)" style="width:180px" size="small" />
-      <el-input v-model="token" placeholder="Authorization Token" style="width:360px" size="small" show-password />
+      <span class="title">业务底座管理</span>
+      <el-tag type="success" size="small" style="margin-right:4px" v-if="bizToken">
+        {{ bizOsClient || 'default' }} · 已登录
+      </el-tag>
+      <el-input v-model="osClient" placeholder="OsClient(租户,可空)" style="width:160px" size="small" v-if="!bizToken" />
+      <el-input v-model="token" placeholder="Microi Authorization Token" style="width:280px" size="small" show-password v-if="!bizToken" />
       <el-button type="primary" size="small" @click="loadDocuments">连接 / 刷新</el-button>
-      <el-button size="small" @click="window.location.href='business-document.html'">单据保存</el-button>
-      <span class="muted" style="font-size:12px">Token 会保存在本地浏览器</span>
+      <el-button size="small" @click="gotoDocument">单据保存</el-button>
+      <el-button size="small" type="warning" @click="gotoLogin">切换账号</el-button>
+      <span class="muted" style="font-size:12px" v-if="!bizToken">支持 bizadmin 无感登录：先访问 business-login.html</span>
     </div>
 
     <div class="layout">
@@ -50,14 +54,15 @@
 
       <div class="content" v-loading="loading">
         <template v-if="schema">
-          <div style="margin-bottom:12px;display:flex;align-items:center;gap:12px">
+          <div style="margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
             <h2 style="margin:0">{{ schema.Label }} <span class="muted" style="font-size:13px">{{ schema.MasterTable }}</span></h2>
             <el-button type="primary" @click="openAddField">+ 添加字段</el-button>
+            <el-button type="success" @click="openBindRelation">+ 新建/绑定关联表</el-button>
           </div>
 
           <table-block :info="schema.Master" @config="openFieldConfig"></table-block>
-          <table-block v-for="t in schema.Details" :key="t.TableName" :info="t" @config="openFieldConfig"></table-block>
-          <table-block v-for="t in schema.Extensions" :key="t.TableName" :info="t" @config="openFieldConfig"></table-block>
+          <table-block v-for="t in schema.Details" :key="t.TableName" :info="t" @config="openFieldConfig" @unbind="unbindRelation(t)"></table-block>
+          <table-block v-for="t in schema.Extensions" :key="t.TableName" :info="t" @config="openFieldConfig" @unbind="unbindRelation(t)"></table-block>
         </template>
         <el-empty v-else description="请选择左侧文档查看结构" />
       </div>
@@ -109,12 +114,49 @@
       </template>
     </el-dialog>
 
+    <!-- 新建/绑定关联表对话框 -->
+    <el-dialog v-model="bindVisible" title="新建 / 绑定关联表" width="500px">
+      <el-form :model="bindForm" label-width="100px">
+        <el-form-item label="关联类型">
+          <el-radio-group v-model="bindForm.RelationType">
+            <el-radio value="Extension">扩展表（1:1，共享主单 Id）</el-radio>
+            <el-radio value="Detail">明细表（1:N）</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="关联表名">
+          <el-input v-model="bindForm.RelationTable" placeholder="如 erp_sales_order_ext2" />
+          <div style="font-size:12px;color:#909399;margin-top:4px">
+            若表不存在，保存后在「添加字段」时会自动建表
+          </div>
+        </el-form-item>
+        <el-form-item label="显示名称">
+          <el-input v-model="bindForm.Label" placeholder="如 发票信息" />
+        </el-form-item>
+        <el-form-item label="外键列名" v-if="bindForm.RelationType === 'Detail'">
+          <el-input v-model="bindForm.ForeignKey" placeholder="如 OrderId" />
+        </el-form-item>
+        <el-form-item label="集合属性名" v-if="bindForm.RelationType === 'Detail'">
+          <el-input v-model="bindForm.PropertyName" placeholder="留空则与表名相同" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="bindVisible = false">取消</el-button>
+        <el-button type="primary" :loading="binding" @click="submitBind">确认绑定</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 字段配置对话框 -->
     <el-dialog v-model="configVisible" :title="'字段配置：' + (configTable && configTable.TableName)" width="1100px" top="5vh" :close-on-click-modal="false">
-      <div style="margin-bottom:10px">
+      <div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <el-button type="primary" size="small" @click="addVirtualField">+ 新增虚拟字段</el-button>
         <el-button type="success" size="small" :loading="configSaving" @click="saveFieldConfigs">保存全部变更</el-button>
-        <el-button size="small" @click="configVisible = false">关闭</el-button>
+        <el-divider direction="vertical" />
+        <el-button size="small" @click="exportFieldConfigs">导出配置 JSON</el-button>
+        <el-upload :show-file-list="false" accept=".json" :before-upload="importFieldConfigs" style="display:inline-block">
+          <el-button size="small" type="warning" :loading="importing">导入配置 JSON</el-button>
+        </el-upload>
+        <span style="font-size:12px;color:#909399">导出/导入可用于跨环境迁移字段配置</span>
+        <el-button size="small" @click="configVisible = false" style="margin-left:auto">关闭</el-button>
       </div>
       <el-table :data="fieldConfigs" size="small" border v-loading="configLoading" height="55vh">
         <el-table-column prop="Name" label="字段名" width="160">
@@ -184,11 +226,11 @@
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <script src="https://unpkg.com/element-plus"></script>
   <script>
-    const { createApp, ref, reactive } = Vue;
+    const { createApp, ref, reactive, onMounted } = Vue;
 
     const TableBlock = {
       props: ['info'],
-      emits: ['config'],
+      emits: ['config', 'unbind'],
       template: `
         <el-card class="table-card" shadow="never">
           <template #header>
@@ -199,8 +241,14 @@
                 <el-tag size="small" class="role-tag" :type="roleType">{{ roleText }}</el-tag>
                 <el-tag size="small" class="role-tag" v-if="info.ForeignKey" type="info">外键: {{ info.ForeignKey }}</el-tag>
                 <el-tag size="small" class="role-tag" v-if="!info.Exists" type="warning">未建表</el-tag>
+                <el-tag size="small" class="role-tag" v-if="info.IsDynamic" type="success">动态绑定</el-tag>
               </div>
-              <el-button size="small" @click="$emit('config', info)">字段配置</el-button>
+              <div style="display:flex;gap:8px">
+                <el-button size="small" @click="$emit('config', info)">字段配置</el-button>
+                <el-popconfirm v-if="info.IsDynamic" title="确认解除绑定？主表数据不受影响。" @confirm="$emit('unbind', info)">
+                  <template #reference><el-button size="small" type="danger" plain>解绑</el-button></template>
+                </el-popconfirm>
+              </div>
             </div>
           </template>
           <el-table :data="info.Columns" size="small" border>
@@ -228,6 +276,53 @@
     createApp({
       components: { TableBlock },
       setup() {
+        /* ── 业务底座独立登录（bizadmin） ────────────────────────────── */
+        const bizToken  = ref('');
+        const bizOsClient = ref('');
+
+        function initBizAuth() {
+          // 优先从 URL 参数（登录页跳转携带），其次 localStorage
+          const q = new URLSearchParams(location.search);
+          const t  = q.get('biz_token')  || localStorage.getItem('biz_admin_token') || '';
+          const oc = q.get('biz_client') || localStorage.getItem('biz_client') || '';
+          if (t) {
+            bizToken.value = t; bizOsClient.value = oc;
+            localStorage.setItem('biz_admin_token', t);
+            localStorage.setItem('biz_client', oc);
+            // 清理 URL 参数（避免刷新重复提交）
+            if (q.has('biz_token')) history.replaceState({}, '', location.pathname);
+          }
+        }
+
+        async function verifyBizToken() {
+          if (!bizToken.value) return false;
+          try {
+            const r = await fetch('/api/BusinessAuth/Verify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ OsClient: bizOsClient.value, Token: bizToken.value })
+            }).then(x => x.json());
+            if (r?.Code !== 1) { bizToken.value = ''; localStorage.removeItem('biz_admin_token'); return false; }
+            return true;
+          } catch { return false; }
+        }
+
+        function gotoLogin() {
+          localStorage.removeItem('biz_admin_token');
+          location.href = 'business-login.html?redirect=' + encodeURIComponent('business-schema.html');
+        }
+
+        function gotoDocument() {
+          const t = bizToken.value;
+          const oc = bizOsClient.value;
+          if (t) {
+            location.href = `business-document.html?biz_token=${encodeURIComponent(t)}&biz_client=${encodeURIComponent(oc)}`;
+          } else {
+            location.href = 'business-document.html';
+          }
+        }
+
+        /* ── Microi Token（用于 BusinessSchema API）─────────────────── */
         const token = ref(localStorage.getItem('microi_biz_token') || '');
         const osClient = ref(localStorage.getItem('microi_biz_osclient') || '');
         const documents = ref([]);
@@ -244,6 +339,7 @@
         const configVisible = ref(false);
         const configLoading = ref(false);
         const configSaving = ref(false);
+        const importing = ref(false);
         const configTable = ref(null);
         const fieldConfigs = ref([]);
 
@@ -356,12 +452,69 @@
             const r = await api('SaveFieldConfigs', { TableName: tableName, Fields: fields });
             if (r && r.Code === 1) {
               ElementPlus.ElMessage.success(r.Msg || '保存成功');
-              await openFieldConfig(configTable.value);
+              // 刷新字段配置面板 + 联动刷新左侧文档列表
+              await Promise.all([
+                openFieldConfig(configTable.value),
+                loadDocuments()
+              ]);
             } else {
               ElementPlus.ElMessage.error(r && r.Msg || '保存失败');
             }
           } catch (e) { ElementPlus.ElMessage.error('请求失败: ' + e.message); }
           finally { configSaving.value = false; }
+        }
+
+        function exportFieldConfigs() {
+          const tableName = configTable.value && configTable.value.TableName;
+          if (!tableName) return;
+          // 仅导出有配置 ID 的字段（已保存到 business_field_config 的条目）
+          const toExport = fieldConfigs.value
+            .filter(x => x.HasConfig || !x.PhysicalExists)
+            .map(x => ({
+              TableName: tableName,
+              FieldName: x.Name,
+              Description: x.Description,
+              LangId: x.LangId,
+              FieldType: x.FieldType,
+              SourceType: x.SourceType,
+              Component: x.Component,
+              IsPrimaryKey: !!x.IsPrimaryKey,
+              IsUpdate: !!x.IsUpdate,
+              ForceHidden: !!x.ForceHidden,
+              DefaultVisible: !!x.DefaultVisible,
+              Required: !!x.Required,
+              SortNo: x.SortNo || 0
+            }));
+          const blob = new Blob([JSON.stringify(toExport, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `field-config-${tableName}-${new Date().toISOString().slice(0,10)}.json`;
+          a.click();
+          URL.revokeObjectURL(url);
+          ElementPlus.ElMessage.success(`已导出 ${toExport.length} 条字段配置`);
+        }
+
+        async function importFieldConfigs(file) {
+          importing.value = true;
+          try {
+            const text = await file.text();
+            let configs;
+            try { configs = JSON.parse(text); } catch { ElementPlus.ElMessage.error('JSON 格式错误'); return false; }
+            if (!Array.isArray(configs) || configs.length === 0) {
+              ElementPlus.ElMessage.warning('导入列表为空或格式不正确');
+              return false;
+            }
+            const r = await api('ImportFieldConfigs', { Configs: configs });
+            if (r && r.Code === 1) {
+              ElementPlus.ElMessage.success(r.Msg || '导入成功');
+              await Promise.all([openFieldConfig(configTable.value), loadDocuments()]);
+            } else {
+              ElementPlus.ElMessage.error(r && r.Msg || '导入失败');
+            }
+          } catch (e) { ElementPlus.ElMessage.error('导入异常: ' + e.message); }
+          finally { importing.value = false; }
+          return false; // 阻止 el-upload 默认上传行为
         }
 
         async function deleteFieldConfig(row) {
@@ -381,12 +534,92 @@
           }
         }
 
-        if (token.value) loadDocuments();
+        /* ── 绑定/解绑关联表 ────────────────────────────────────────── */
+        const bindVisible = ref(false);
+        const binding = ref(false);
+        const bindForm = reactive({
+          RelationType: 'Extension', RelationTable: '', Label: '', ForeignKey: '', PropertyName: ''
+        });
 
-        return { token, osClient, documents, schema, current, loading, addVisible, submitting,
+        function openBindRelation() {
+          bindForm.RelationType = 'Extension';
+          bindForm.RelationTable = '';
+          bindForm.Label = '';
+          bindForm.ForeignKey = '';
+          bindForm.PropertyName = '';
+          bindVisible.value = true;
+        }
+
+        async function submitBind() {
+          if (!bindForm.RelationTable) { ElementPlus.ElMessage.warning('请输入关联表名'); return; }
+          if (bindForm.RelationType === 'Detail' && !bindForm.ForeignKey) {
+            ElementPlus.ElMessage.warning('明细表必须填写外键列名'); return;
+          }
+          binding.value = true;
+          try {
+            const r = await api('BindRelation', {
+              MasterTable: schema.value.MasterTable,
+              RelationTable: bindForm.RelationTable,
+              RelationType: bindForm.RelationType,
+              Label: bindForm.Label,
+              ForeignKey: bindForm.ForeignKey,
+              PropertyName: bindForm.PropertyName
+            });
+            if (r && r.Code === 1) {
+              ElementPlus.ElMessage.success(r.Msg || '绑定成功');
+              bindVisible.value = false;
+              await openDocument(schema.value.MasterTable);
+              await loadDocuments();
+            } else {
+              ElementPlus.ElMessage.error(r && r.Msg || '绑定失败');
+            }
+          } catch (e) { ElementPlus.ElMessage.error('请求失败: ' + e.message); }
+          finally { binding.value = false; }
+        }
+
+        async function unbindRelation(tableInfo) {
+          if (!tableInfo.RelationId) { ElementPlus.ElMessage.warning('静态关系不可解绑（需修改 C# 代码）'); return; }
+          try {
+            const r = await api('UnbindRelation', {
+              RelationId: tableInfo.RelationId,
+              MasterTable: schema.value.MasterTable
+            });
+            if (r && r.Code === 1) {
+              ElementPlus.ElMessage.success('已解除绑定');
+              await openDocument(schema.value.MasterTable);
+              await loadDocuments();
+            } else {
+              ElementPlus.ElMessage.error(r && r.Msg || '解绑失败');
+            }
+          } catch (e) { ElementPlus.ElMessage.error('请求失败: ' + e.message); }
+        }
+
+        /* ── 初始化：bizadmin 鉴权 ──────────────────────────────────── */
+        onMounted(async () => {
+          initBizAuth();
+          if (bizToken.value) {
+            const valid = await verifyBizToken();
+            if (!valid) {
+              ElementPlus.ElMessage.warning('登录已过期，请重新登录');
+              setTimeout(gotoLogin, 1500);
+              return;
+            }
+            // 用 bizOsClient 同步 osClient（业务 API 用的租户）
+            if (bizOsClient.value) osClient.value = bizOsClient.value;
+          }
+          if (token.value) loadDocuments();
+        });
+
+        return { token, osClient, bizToken, bizOsClient,
+          documents, schema, current, loading, addVisible, submitting,
           dataTypes, form, fieldTypes, sourceTypes, components,
-          configVisible, configLoading, configSaving, configTable, fieldConfigs,
-          loadDocuments, openDocument, openAddField, submitAddField, openFieldConfig, addVirtualField, saveFieldConfigs, deleteFieldConfig };
+          configVisible, configLoading, configSaving, importing, configTable, fieldConfigs,
+          bindVisible, binding, bindForm,
+          gotoLogin, gotoDocument,
+          loadDocuments, openDocument, openAddField, submitAddField,
+          openFieldConfig, addVirtualField, saveFieldConfigs, deleteFieldConfig,
+          exportFieldConfigs, importFieldConfigs,
+          openBindRelation, submitBind, unbindRelation };
       }
     }).use(ElementPlus).mount('#app');
   </script>

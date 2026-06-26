@@ -108,17 +108,53 @@ namespace Microi.net.Business
 
         #region 删除
 
-        /// <summary>删除一条数据。</summary>
+        /// <summary>删除一条数据，并级联清理扩展表与明细表（需重写 EntityType）。</summary>
         public virtual async Task<DosResult> DelAsync(TParam param, DbTrans trans = null)
         {
             var check = await OnBeforeDelAsync(param);
             if (check != null && check.Code != 1) return check;
 
-            var result = await FormEngine.DelFormDataAsync(TableKey, param, trans);
+            var id = param?.Id;
+            var ownTrans = trans == null && EntityType != null && !string.IsNullOrWhiteSpace(id);
+            if (ownTrans)
+            {
+                var client = OsClientExtend.GetClient(param.OsClient);
+                if (client?.Db != null) trans = client.Db.BeginTransaction();
+                else ownTrans = false;
+            }
 
-            if (result != null && result.Code == 1)
+            try
+            {
+                var result = await FormEngine.DelFormDataAsync(TableKey, param, trans);
+                if (result == null || result.Code != 1)
+                {
+                    if (ownTrans) trans.Rollback();
+                    return result ?? new DosResult(0, null, "删除主单失败。");
+                }
+
+                if (EntityType != null && !string.IsNullOrWhiteSpace(id))
+                {
+                    var relResult = await BusinessDocumentWriter.DeleteRelationsAsync(id, EntityType, param.OsClient, trans);
+                    if (relResult != null && relResult.Code != 1)
+                    {
+                        if (ownTrans) trans.Rollback();
+                        return relResult;
+                    }
+                }
+
+                if (ownTrans) trans.Commit();
                 await OnAfterDelAsync(param, result);
-            return result;
+                return result;
+            }
+            catch (Exception ex)
+            {
+                if (ownTrans) trans.Rollback();
+                return new DosResult(0, null, $"删除业务文档异常：{ex.Message}");
+            }
+            finally
+            {
+                if (ownTrans) trans?.Close();
+            }
         }
 
         #endregion

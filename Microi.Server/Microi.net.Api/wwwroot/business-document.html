@@ -3,211 +3,398 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>业务单据保存 · Microi 业务底座</title>
+  <title>业务单据 · Microi 业务底座</title>
   <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
   <style>
     html, body { margin: 0; height: 100%; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: #f5f7fa; }
-    #app { height: 100%; padding: 16px; box-sizing: border-box; }
-    .topbar { display: flex; gap: 10px; align-items: center; padding-bottom: 16px; border-bottom: 1px solid #ebeef5; margin-bottom: 16px; }
-    .topbar .title { font-weight: 600; font-size: 16px; margin-right: 16px; color: #303133; }
-    .muted { color: #909399; }
-    .form-card { margin-bottom: 16px; }
-    .detail-card { margin-bottom: 16px; }
+    #app { padding: 16px; box-sizing: border-box; min-height: 100%; }
+    .topbar { display: flex; gap: 8px; align-items: center; padding-bottom: 14px; border-bottom: 1px solid #ebeef5; margin-bottom: 16px; flex-wrap: wrap; }
+    .topbar .title { font-weight: 600; font-size: 16px; margin-right: 8px; color: #303133; white-space: nowrap; }
+    .section-title { font-weight: 600; font-size: 13px; color: #606266; margin-bottom: 10px; }
     .detail-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+    .skeleton-row { height: 32px; background: linear-gradient(90deg, #f2f3f5 25%, #e8eaec 50%, #f2f3f5 75%); background-size: 400% 100%; animation: shimmer 1.4s infinite; border-radius: 4px; margin-bottom: 10px; }
+    @keyframes shimmer { 0%{background-position:100% 50%} 100%{background-position:0 50%} }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; }
+    @media (max-width: 700px) { .form-grid { grid-template-columns: 1fr; } }
+    pre { background: #f5f7fa; padding: 10px; border-radius: 4px; overflow: auto; font-size: 12px; }
   </style>
 </head>
 <body>
-  <div id="app">
-    <div class="topbar">
-      <span class="title">业务单据保存</span>
-      <el-input v-model="osClient" placeholder="OsClient" style="width:180px" size="small" />
-      <el-input v-model="token" placeholder="Authorization Token" style="width:360px" size="small" show-password />
-      <el-select v-model="controller" placeholder="业务模块" style="width:160px" size="small">
-        <el-option label="销售订单" value="SalesOrder" />
-        <el-option label="生产工单" value="WorkOrder" />
-      </el-select>
-      <el-input v-model="docId" placeholder="Id（留空为新增）" style="width:180px" size="small" />
-      <el-button type="primary" size="small" :loading="loading" @click="loadDocument">加载</el-button>
-      <el-button type="success" size="small" :loading="saving" @click="saveDocument">保存</el-button>
-    </div>
+<div id="app">
+  <div class="topbar">
+    <span class="title">业务单据</span>
+    <el-input v-model="osClient" placeholder="OsClient" style="width:160px" size="small" @change="savePrefs" />
+    <el-input v-model="token" placeholder="Authorization Token" style="width:320px" size="small" show-password @change="savePrefs" />
+    <el-select v-model="selectedDoc" placeholder="选择业务模块" style="width:200px" size="small"
+               :loading="docsLoading" @change="onDocChange">
+      <el-option v-for="d in documents" :key="d.MasterTable" :label="d.Label || d.MasterTable" :value="d" />
+    </el-select>
+    <el-input v-model="docId" placeholder="Id（留空=新增）" style="width:180px" size="small" clearable />
+    <el-button type="primary" size="small" :loading="loading" :disabled="!selectedDoc" @click="loadDocument">加载</el-button>
+    <el-button type="success" size="small" :loading="saving" :disabled="!selectedDoc" @click="saveDocument">保存</el-button>
+    <el-button size="small" @click="resetForm">重置</el-button>
+  </div>
 
-    <el-alert v-if="message" :title="message" :type="messageType" closable @close="message = ''" style="margin-bottom:16px" />
+  <el-alert v-if="message" :title="message" :type="msgType" closable show-icon @close="message=''" style="margin-bottom:14px" />
 
-    <el-card class="form-card" shadow="never">
-      <template #header><b>主单信息</b></template>
-      <el-form :model="form" label-width="120px" size="small">
-        <el-form-item label="Id"><el-input v-model="form.Id" disabled /></el-form-item>
-        <el-form-item label="客户" v-if="controller === 'SalesOrder'">
-          <el-input v-model="form.CustomerId" placeholder="客户 Id" />
-        </el-form-item>
-        <el-form-item label="客户名称" v-if="controller === 'SalesOrder'">
-          <el-input v-model="form.CustomerName" placeholder="客户名称" />
-        </el-form-item>
-        <el-form-item label="订单金额" v-if="controller === 'SalesOrder'">
-          <el-input-number v-model="form.TotalAmount" :min="0" :precision="2" />
-        </el-form-item>
-        <el-form-item label="产品" v-if="controller === 'WorkOrder'">
-          <el-input v-model="form.ProductId" placeholder="产品 Id" />
-        </el-form-item>
-        <el-form-item label="产品名称" v-if="controller === 'WorkOrder'">
-          <el-input v-model="form.ProductName" placeholder="产品名称" />
-        </el-form-item>
-        <el-form-item label="计划数量" v-if="controller === 'WorkOrder'">
-          <el-input-number v-model="form.PlanQty" :min="0" :precision="2" />
-        </el-form-item>
-        <el-form-item label="扩展字段示例">
-          <el-input v-model="form.ExtRemark" placeholder="如 SalesOrderExt.Remark" />
-        </el-form-item>
+  <!-- 骨架屏 -->
+  <template v-if="schemaLoading">
+    <el-card shadow="never" style="margin-bottom:16px">
+      <div class="skeleton-row" v-for="i in 5" :key="i" />
+    </el-card>
+  </template>
+
+  <!-- 主单表单 -->
+  <template v-else-if="schema">
+    <el-card shadow="never" style="margin-bottom:16px">
+      <template #header>
+        <b>主单 · {{ schema.MasterTable }}</b>
+        <el-tag size="small" style="margin-left:8px" v-if="form.BillNo">{{ form.BillNo }}</el-tag>
+        <el-tag size="small" type="info" style="margin-left:8px" v-if="form.Status != null">状态 {{ form.Status }}</el-tag>
+      </template>
+      <el-form :model="form" label-width="110px" size="small">
+        <div class="form-grid">
+          <template v-for="f in masterFields" :key="f.Name">
+            <el-form-item :label="f.Description || f.Name">
+              <dynamic-field :field="f" v-model="form[f.Name]" />
+            </el-form-item>
+          </template>
+        </div>
       </el-form>
     </el-card>
 
-    <el-card class="detail-card" shadow="never" v-if="controller === 'SalesOrder'">
-      <template #header>
-        <div class="detail-header">
-          <b>明细 Items</b>
-          <el-button type="primary" size="small" @click="addItem">+ 添加明细</el-button>
-        </div>
-      </template>
-      <el-table :data="items" size="small" border>
-        <el-table-column type="index" width="50" />
-        <el-table-column label="产品 Id" width="180">
-          <template #default="s"><el-input v-model="s.row.ProductId" size="small" /></template>
-        </el-table-column>
-        <el-table-column label="产品名称" width="180">
-          <template #default="s"><el-input v-model="s.row.ProductName" size="small" /></template>
-        </el-table-column>
-        <el-table-column label="数量" width="120">
-          <template #default="s"><el-input-number v-model="s.row.Qty" size="small" :min="0" :precision="2" /></template>
-        </el-table-column>
-        <el-table-column label="单价" width="120">
-          <template #default="s"><el-input-number v-model="s.row.Price" size="small" :min="0" :precision="2" /></template>
-        </el-table-column>
-        <el-table-column label="金额" width="120">
-          <template #default="s">{{ (s.row.Qty || 0) * (s.row.Price || 0) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="80">
-          <template #default="s">
-            <el-button type="danger" size="small" link @click="removeItem(s.$index)">删除</el-button>
+    <!-- 扩展表 -->
+    <el-card shadow="never" style="margin-bottom:16px" v-if="extFields.length">
+      <template #header><b>扩展信息 · {{ schema.Extensions[0]?.TableName }}</b></template>
+      <el-form :model="form" label-width="110px" size="small">
+        <div class="form-grid">
+          <template v-for="f in extFields" :key="f.Name">
+            <el-form-item :label="f.Description || f.Name">
+              <dynamic-field :field="f" v-model="form[f.Name]" />
+            </el-form-item>
           </template>
-        </el-table-column>
-      </el-table>
-      <el-empty v-if="items.length === 0" description="暂无明细" :image-size="50" />
+        </div>
+      </el-form>
     </el-card>
 
+    <!-- 明细表 -->
+    <template v-for="(detail, di) in schema.Details" :key="di">
+      <el-card shadow="never" style="margin-bottom:16px" v-if="detailFieldsMap[detail.TableName]?.length">
+        <template #header>
+          <div class="detail-header">
+            <b>{{ detail.Label || detail.TableName }}</b>
+            <el-button type="primary" size="small" @click="addDetailRow(detail.TableName)">+ 添加行</el-button>
+          </div>
+        </template>
+        <el-table :data="detailRows[detail.TableName] || []" size="small" border>
+          <el-table-column type="index" width="45" />
+          <el-table-column
+            v-for="f in detailFieldsMap[detail.TableName]" :key="f.Name"
+            :label="f.Description || f.Name" :min-width="f.Component === 'NumberText' ? 100 : 140">
+            <template #default="s">
+              <dynamic-field :field="f" v-model="s.row[f.Name]" />
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="70" fixed="right">
+            <template #default="s">
+              <el-button type="danger" size="small" link @click="removeDetailRow(detail.TableName, s.$index)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-if="!(detailRows[detail.TableName]?.length)" description="暂无明细" :image-size="48" />
+      </el-card>
+    </template>
+
+    <!-- 保存结果 -->
     <el-card shadow="never" v-if="result">
-      <template #header><b>保存结果</b></template>
-      <pre style="background:#f5f7fa;padding:10px;border-radius:4px;overflow:auto">{{ JSON.stringify(result, null, 2) }}</pre>
+      <template #header><b>操作结果</b></template>
+      <pre>{{ JSON.stringify(result, null, 2) }}</pre>
     </el-card>
-  </div>
+  </template>
 
-  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-  <script src="https://unpkg.com/element-plus"></script>
-  <script>
-    const { createApp, ref, reactive } = Vue;
+  <!-- 未选择模块提示 -->
+  <el-empty v-else description="请先填入 Token，再选择业务模块" :image-size="80" />
+</div>
 
-    createApp({
-      setup() {
-        const token = ref(localStorage.getItem('microi_biz_token') || '');
-        const osClient = ref(localStorage.getItem('microi_biz_osclient') || '');
-        const controller = ref('SalesOrder');
-        const docId = ref('');
-        const loading = ref(false);
-        const saving = ref(false);
-        const message = ref('');
-        const messageType = ref('info');
-        const result = ref(null);
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/element-plus"></script>
+<script>
+const { createApp, ref, reactive, computed, watch, defineComponent, h, resolveComponent, onMounted } = Vue;
 
-        const form = reactive({ Id: '', CustomerId: '', CustomerName: '', TotalAmount: 0, ProductId: '', ProductName: '', PlanQty: 0, ExtRemark: '' });
-        const items = ref([]);
-
-        async function api(action, body) {
-          const res = await fetch('/api/' + controller.value + '/' + action, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token.value },
-            body: JSON.stringify(Object.assign({ OsClient: osClient.value }, body || {}))
-          });
-          return await res.json();
-        }
-
-        async function loadDocument() {
-          localStorage.setItem('microi_biz_token', token.value);
-          localStorage.setItem('microi_biz_osclient', osClient.value);
-          if (!docId.value) { message.value = '请输入 Id 或留空以新增'; messageType.value = 'warning'; return; }
-          loading.value = true;
-          try {
-            const r = await api('GetModelWithRelations', { Id: docId.value });
-            if (r && r.Code === 1) {
-              const d = r.Data || {};
-              form.Id = d.Id || '';
-              form.CustomerId = d.CustomerId || '';
-              form.CustomerName = d.CustomerName || '';
-              form.TotalAmount = d.TotalAmount || 0;
-              form.ProductId = d.ProductId || '';
-              form.ProductName = d.ProductName || '';
-              form.PlanQty = d.PlanQty || 0;
-              form.ExtRemark = d.Remark || '';
-              items.value = (d.Items || []).map(x => ({ ...x }));
-              result.value = r;
-              message.value = '加载成功';
-              messageType.value = 'success';
-            } else {
-              message.value = r && r.Msg || '加载失败';
-              messageType.value = 'error';
-            }
-          } catch (e) { message.value = '请求失败: ' + e.message; messageType.value = 'error'; }
-          finally { loading.value = false; }
-        }
-
-        function addItem() {
-          items.value.push({ Id: '', ProductId: '', ProductName: '', Qty: 1, Price: 0 });
-        }
-
-        function removeItem(idx) {
-          items.value.splice(idx, 1);
-        }
-
-        async function saveDocument() {
-          localStorage.setItem('microi_biz_token', token.value);
-          localStorage.setItem('microi_biz_osclient', osClient.value);
-          saving.value = true;
-          try {
-            const payload = { Id: form.Id };
-            if (controller.value === 'SalesOrder') {
-              Object.assign(payload, {
-                CustomerId: form.CustomerId,
-                CustomerName: form.CustomerName,
-                TotalAmount: form.TotalAmount,
-                Remark: form.ExtRemark,
-                Items: items.value
-              });
-            } else {
-              Object.assign(payload, {
-                ProductId: form.ProductId,
-                ProductName: form.ProductName,
-                PlanQty: form.PlanQty,
-                Remark: form.ExtRemark
-              });
-            }
-            const r = await api('Save', payload);
-            result.value = r;
-            if (r && r.Code === 1) {
-              message.value = r.Msg || '保存成功';
-              messageType.value = 'success';
-              if (controller.value === 'SalesOrder' && r.Data && r.Data.Id) {
-                form.Id = r.Data.Id;
-                docId.value = r.Data.Id;
-              }
-            } else {
-              message.value = r && r.Msg || '保存失败';
-              messageType.value = 'error';
-            }
-          } catch (e) { message.value = '请求失败: ' + e.message; messageType.value = 'error'; }
-          finally { saving.value = false; }
-        }
-
-        return { token, osClient, controller, docId, loading, saving, message, messageType, result, form, items, loadDocument, addItem, removeItem, saveDocument };
+/* ── 动态字段组件 ─────────────────────────────────────────── */
+const DynamicField = defineComponent({
+  name: 'DynamicField',
+  props: { field: Object, modelValue: { default: null } },
+  emits: ['update:modelValue'],
+  setup(props, { emit }) {
+    const onInput = v => emit('update:modelValue', v);
+    return () => {
+      const comp = props.field?.Component || 'Text';
+      const val = props.modelValue;
+      if (comp === 'NumberText') {
+        return h(resolveComponent('el-input-number'), {
+          modelValue: val != null ? Number(val) : null,
+          min: 0, precision: 2, style: 'width:100%',
+          'onUpdate:modelValue': onInput
+        });
       }
-    }).use(ElementPlus).mount('#app');
-  </script>
+      if (comp === 'Switch') {
+        return h(resolveComponent('el-switch'), {
+          modelValue: val === true || val === 1 || val === '1',
+          'onUpdate:modelValue': v => onInput(v ? 1 : 0)
+        });
+      }
+      if (comp === 'DateTimePicker') {
+        return h(resolveComponent('el-date-picker'), {
+          modelValue: val || null, type: 'datetime', style: 'width:100%',
+          format: 'YYYY-MM-DD HH:mm:ss', valueFormat: 'YYYY-MM-DD HH:mm:ss',
+          'onUpdate:modelValue': onInput
+        });
+      }
+      if (comp === 'Textarea') {
+        return h(resolveComponent('el-input'), {
+          modelValue: val != null ? String(val) : '', type: 'textarea', rows: 2,
+          'onUpdate:modelValue': onInput
+        });
+      }
+      return h(resolveComponent('el-input'), {
+        modelValue: val != null ? String(val) : '',
+        'onUpdate:modelValue': onInput
+      });
+    };
+  }
+});
+
+/* ── 系统字段 & 只读字段（不在表单中显示） ─────────────────── */
+const SYS_FIELDS = new Set(['id','createtime','updatetime','userid','username','isdeleted',
+  'orderid','workorderid','osclient','billno','status','state','auditorid','audittime',
+  'actualstarttime','actualendtime']);
+
+function isEditable(f) {
+  return f.DefaultVisible !== false
+    && !f.ForceHidden
+    && !SYS_FIELDS.has((f.Name || '').toLowerCase());
+}
+
+/* ── 主应用 ──────────────────────────────────────────────── */
+    createApp({
+      components: { DynamicField },
+      setup() {
+        /* ── bizadmin 无感鉴权（与 business-schema.html 共享 Token）── */
+        const bizToken = ref('');
+        const bizOsClient = ref('');
+        function initBizAuth() {
+          const q = new URLSearchParams(location.search);
+          const t  = q.get('biz_token')  || localStorage.getItem('biz_admin_token') || '';
+          const oc = q.get('biz_client') || localStorage.getItem('biz_client') || '';
+          if (t) { bizToken.value = t; bizOsClient.value = oc; if (q.has('biz_token')) history.replaceState({}, '', location.pathname); }
+        }
+    const token    = ref(localStorage.getItem('biz_token') || '');
+    const osClient = ref(localStorage.getItem('biz_client') || '');
+
+    onMounted(() => {
+      initBizAuth();
+      // 用 bizOsClient 回填 osClient（如果 osClient 为空）
+      if (bizOsClient.value && !osClient.value) osClient.value = bizOsClient.value;
+    });
+    const savePrefs = () => {
+      localStorage.setItem('biz_token', token.value);
+      localStorage.setItem('biz_client', osClient.value);
+    };
+
+    const documents   = ref([]);
+    const docsLoading = ref(false);
+    const selectedDoc = ref(null);
+    const docId       = ref('');
+    const loading     = ref(false);
+    const saving      = ref(false);
+    const schemaLoading = ref(false);
+    const message     = ref('');
+    const msgType     = ref('info');
+    const result      = ref(null);
+
+    const schema      = ref(null);     // GetDocumentSchema 返回
+    const fieldDefs   = ref({});       // tableName → fields[]
+    const form        = reactive({});  // 主单 + 扩展表扁平字段
+    const detailRows  = reactive({});  // tableName → row[]
+
+    /* 编辑字段列表 */
+    const masterFields = computed(() =>
+      (fieldDefs.value[schema.value?.MasterTable] || []).filter(isEditable));
+    const extFields = computed(() => {
+      if (!schema.value?.Extensions?.length) return [];
+      return (fieldDefs.value[schema.value.Extensions[0]?.TableName] || []).filter(isEditable);
+    });
+    const detailFieldsMap = computed(() => {
+      const m = {};
+      for (const d of (schema.value?.Details || [])) {
+        m[d.TableName] = (fieldDefs.value[d.TableName] || []).filter(f =>
+          !SYS_FIELDS.has((f.Name || '').toLowerCase())
+          && f.Name.toLowerCase() !== (d.ForeignKey || '').toLowerCase()
+        );
+      }
+      return m;
+    });
+
+    /* HTTP 工具 */
+    function headers() {
+      // 优先使用 bizadmin Token（业务底座独立鉴权），无则使用 Microi 主站 Token
+      const authToken = bizToken.value || token.value;
+      return { 'Content-Type': 'application/json', 'Authorization': authToken };
+    }
+    async function schemaApi(action, params) {
+      const r = await fetch('/api/BusinessSchema/' + action, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify(Object.assign({ OsClient: osClient.value }, params))
+      });
+      return r.json();
+    }
+    async function docApi(controller, action, body) {
+      const r = await fetch('/api/' + controller + '/' + action, {
+        method: 'POST',
+        headers: headers(),
+        body: JSON.stringify(Object.assign({ OsClient: osClient.value }, body))
+      });
+      return r.json();
+    }
+
+    /* 加载所有业务文档列表 */
+    async function fetchDocuments() {
+      if (!token.value) return;
+      docsLoading.value = true;
+      try {
+        const r = await schemaApi('GetDocuments', {});
+        if (r?.Code === 1) {
+          documents.value = (r.Data || []).map(d => ({
+            ...d,
+            Label: d.Comment || d.MasterTable,
+            Controller: guessController(d.MasterTable)
+          }));
+        }
+      } catch { /* 忽略 */ }
+      finally { docsLoading.value = false; }
+    }
+
+    /* 根据表名推断控制器名（去 _ 转 PascalCase） */
+    function guessController(tableName) {
+      return (tableName || '').replace(/^[a-z]+_/i, '').replace(/_([a-z])/g, (_, c) => c.toUpperCase())
+        .replace(/^(.)/, c => c.toUpperCase());
+    }
+
+    /* 选中文档后加载 schema + 字段配置 */
+    async function onDocChange(doc) {
+      if (!doc) return;
+      schemaLoading.value = true;
+      schema.value = null;
+      Object.keys(form).forEach(k => delete form[k]);
+      Object.keys(detailRows).forEach(k => delete detailRows[k]);
+      result.value = null;
+      try {
+        const r = await schemaApi('GetDocumentSchema', { MasterTable: doc.MasterTable });
+        if (r?.Code !== 1) { notify(r?.Msg || '加载结构失败', 'error'); return; }
+        schema.value = r.Data;
+        /* 并行加载各表字段配置 */
+        const tables = [
+          r.Data.MasterTable,
+          ...(r.Data.Extensions || []).map(e => e.TableName),
+          ...(r.Data.Details || []).map(d => d.TableName)
+        ].filter(Boolean);
+        const results = await Promise.all(tables.map(t => schemaApi('GetFieldConfigs', { TableName: t })));
+        results.forEach((fr, i) => {
+          if (fr?.Code === 1) fieldDefs.value[tables[i]] = fr.Data || [];
+        });
+        /* 初始化 detailRows */
+        for (const d of (r.Data.Details || [])) {
+          if (!detailRows[d.TableName]) detailRows[d.TableName] = [];
+        }
+      } catch (e) { notify('加载结构异常: ' + e.message, 'error'); }
+      finally { schemaLoading.value = false; }
+    }
+
+    /* 加载已有单据 */
+    async function loadDocument() {
+      if (!docId.value) { notify('请输入单据 Id', 'warning'); return; }
+      savePrefs();
+      loading.value = true;
+      result.value = null;
+      try {
+        const ctrl = selectedDoc.value?.Controller;
+        const r = await docApi(ctrl, 'GetModelWithRelations', { Id: docId.value });
+        if (r?.Code !== 1) { notify(r?.Msg || '加载失败', 'error'); return; }
+        const data = r.Data || {};
+        Object.assign(form, data);
+        /* 填充明细 */
+        for (const d of (schema.value?.Details || [])) {
+          detailRows[d.TableName] = (data[d.PropertyName] || []).map(x => ({ ...x }));
+        }
+        result.value = r;
+        notify('加载成功', 'success');
+      } catch (e) { notify('请求异常: ' + e.message, 'error'); }
+      finally { loading.value = false; }
+    }
+
+    /* 保存单据 */
+    async function saveDocument() {
+      savePrefs();
+      saving.value = true;
+      result.value = null;
+      try {
+        const ctrl = selectedDoc.value?.Controller;
+        const payload = Object.assign({}, form);
+        /* 挂载各明细 */
+        for (const d of (schema.value?.Details || [])) {
+          payload[d.PropertyName || d.TableName] = detailRows[d.TableName] || [];
+        }
+        const r = await fetch('/api/' + ctrl + '/Save', {
+          method: 'POST',
+          headers: headers(),
+          body: JSON.stringify(payload)
+        }).then(x => x.json());
+        result.value = r;
+        if (r?.Code === 1) {
+          notify(r.Msg || '保存成功', 'success');
+          if (r.Data?.Id) { form.Id = r.Data.Id; docId.value = r.Data.Id; }
+        } else {
+          notify(r?.Msg || '保存失败', 'error');
+        }
+      } catch (e) { notify('请求异常: ' + e.message, 'error'); }
+      finally { saving.value = false; }
+    }
+
+    function addDetailRow(tableName) {
+      if (!detailRows[tableName]) detailRows[tableName] = [];
+      detailRows[tableName].push({});
+    }
+    function removeDetailRow(tableName, idx) {
+      detailRows[tableName].splice(idx, 1);
+    }
+    function resetForm() {
+      Object.keys(form).forEach(k => delete form[k]);
+      for (const k of Object.keys(detailRows)) detailRows[k] = [];
+      docId.value = '';
+      result.value = null;
+    }
+    function notify(msg, type) {
+      message.value = msg; msgType.value = type || 'info';
+    }
+
+    /* Token 变化时自动拉取文档列表 */
+    watch(token, v => { if (v) fetchDocuments(); });
+    fetchDocuments();
+
+    return {
+      token, osClient, bizToken, bizOsClient, savePrefs,
+      documents, docsLoading, selectedDoc, docId,
+      loading, saving, schemaLoading,
+      message, msgType,
+      result, schema, form, detailRows,
+      masterFields, extFields, detailFieldsMap,
+      onDocChange, loadDocument, saveDocument,
+      addDetailRow, removeDetailRow, resetForm
+    };
+  }
+}).use(ElementPlus).mount('#app');
+</script>
 </body>
 </html>

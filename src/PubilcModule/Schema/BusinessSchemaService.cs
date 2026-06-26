@@ -51,7 +51,7 @@ namespace Microi.net.Business
             return new DosResultList<dynamic>(1, list);
         }
 
-        /// <summary>获取一个文档的完整结构（主表 + 明细 + 扩展，含实时列）。</summary>
+        /// <summary>获取一个文档的完整结构（主表 + 明细 + 扩展，含实时列，合并静态+动态关系）。</summary>
         public DosResult<BusinessDocumentSchema> GetDocumentSchema(string masterTable, string osClient)
         {
             var masterType = BusinessRelationResolver.GetTypeByTable(masterTable);
@@ -70,10 +70,15 @@ namespace Microi.net.Business
                     BusinessTableRole.Master, null, null, existing)
             };
 
+            // ── 静态关系（代码特性）──
+            var staticDetailNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var staticExtNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
             foreach (var d in BusinessRelationResolver.GetDetails(masterType))
             {
                 var name = BusinessRelationResolver.GetTableName(d.EntityType);
                 if (name == null) continue;
+                staticDetailNames.Add(name);
                 var label = d.EntityType.GetCustomAttribute<BusinessTableAttribute>()?.Comment ?? d.EntityType.Name;
                 schema.Details.Add(BuildTableInfo(ctx, name, label, BusinessTableRole.Detail,
                     d.ForeignKey, d.PropertyName ?? name, existing));
@@ -83,9 +88,32 @@ namespace Microi.net.Business
             {
                 var name = BusinessRelationResolver.GetTableName(e.EntityType);
                 if (name == null) continue;
+                staticExtNames.Add(name);
                 var label = e.EntityType.GetCustomAttribute<BusinessTableAttribute>()?.Comment ?? e.EntityType.Name;
                 schema.Extensions.Add(BuildTableInfo(ctx, name, label, BusinessTableRole.Extension,
                     null, null, existing));
+            }
+
+            // ── 动态关系（business_doc_relation），去重静态已声明的 ──
+            var dynService = new BusinessDocRelationService();
+            var dynamicRels = dynService.GetRelationsAsync(masterTable, osClient).GetAwaiter().GetResult();
+            foreach (var rel in dynamicRels)
+            {
+                if (string.IsNullOrWhiteSpace(rel.RelationTable)) continue;
+                if (string.Equals(rel.RelationType, "Extension", StringComparison.OrdinalIgnoreCase)
+                    && !staticExtNames.Contains(rel.RelationTable))
+                {
+                    schema.Extensions.Add(BuildTableInfo(ctx, rel.RelationTable,
+                        rel.Label ?? rel.RelationTable, BusinessTableRole.Extension,
+                        null, null, existing, rel.Id));
+                }
+                else if (string.Equals(rel.RelationType, "Detail", StringComparison.OrdinalIgnoreCase)
+                    && !staticDetailNames.Contains(rel.RelationTable))
+                {
+                    schema.Details.Add(BuildTableInfo(ctx, rel.RelationTable,
+                        rel.Label ?? rel.RelationTable, BusinessTableRole.Detail,
+                        rel.ForeignKey, rel.PropertyName ?? rel.RelationTable, existing, rel.Id));
+                }
             }
 
             return new DosResult<BusinessDocumentSchema>(1, schema);
@@ -170,7 +198,8 @@ namespace Microi.net.Business
         #region 私有
 
         private BusinessTableInfo BuildTableInfo(DbContext ctx, string tableName, string label,
-            BusinessTableRole role, string foreignKey, string propertyName, HashSet<string> existing)
+            BusinessTableRole role, string foreignKey, string propertyName, HashSet<string> existing,
+            string relationId = null)
         {
             var info = new BusinessTableInfo
             {
@@ -179,7 +208,8 @@ namespace Microi.net.Business
                 Role = role,
                 ForeignKey = foreignKey,
                 PropertyName = propertyName,
-                Exists = existing.Contains(tableName)
+                Exists = existing.Contains(tableName),
+                RelationId = relationId
             };
             if (info.Exists)
                 info.Columns = ReadColumns(ctx, tableName);

@@ -226,6 +226,139 @@ Microi.net/
 
 ---
 
+## 🏗️ 业务底座（ERP / MES 可扩展框架）
+
+`src/` 目录内置了一套运行于 Microi 吾码平台之上的**可扩展业务框架**，可作为企业定制 ERP / MES / WMS 等系统的开发起点。
+
+### 架构分层
+
+```
+src/
+├── Model/           Microi.Business.Model    # 共享模型与实体基类
+├── PubilcModule/    Microi.Business.Core      # 内核（生命周期 / 状态机 / CRUD / Schema）
+├── ComonBusiness/   Microi.Business.Common   # 公共业务（单据编号 / 控制器基类 / 鉴权）
+├── ErpModule/       Microi.Erp               # ERP 示例：销售订单
+└── MesModule/       Microi.Mes               # MES 示例：生产工单
+```
+
+依赖方向：`Erp/Mes → Common → Core → Model → Microi.Core`（单向，可按需横向扩展 WMS/OMS 等）
+
+### 核心特性
+
+<table>
+<thead><tr><th width="220">特性</th><th>说明</th></tr></thead>
+<tbody>
+<tr><td>🔌 <strong>模块插件生命周期</strong></td><td>每个业务系统是可热插拔模块，统一经历 <code>发现 → ConfigureServices → 注册 → 启动前 → 启动后 → 停止</code>，启动失败不影响其他模块</td></tr>
+<tr><td>📋 <strong>单据状态机</strong></td><td>声明式定义 <code>草稿 → 提交 → 审核 → 完成 → 作废</code>，带守卫（Guard）、进入/退出钩子（OnEnter/OnExit），一行代码触发流转</td></tr>
+<tr><td>🔄 <strong>实体 CRUD 生命周期</strong></td><td><code>AddAsync/UptAsync/DelAsync</code> 内置 <code>OnBefore/OnAfter</code> 钩子，子类按需重写；全程共享平台事务</td></tr>
+<tr><td>🗂️ <strong>主-明细-扩展表</strong></td><td>声明 <code>[BusinessExtensionTable]</code>（1:1）和 <code>[BusinessDetailTable]</code>（1:N），保存/读取/级联删除一次性处理，支持代码特性与<strong>纯前端动态绑定</strong>两种模式</td></tr>
+<tr><td>🛠️ <strong>Code-First 自动建表</strong></td><td>实体标注 <code>[BusinessTable]</code>，启动时自动建表/补列（幂等），支持 MySQL / SqlServer / Oracle / PostgreSQL / 达梦 / 人大金仓</td></tr>
+<tr><td>⚙️ <strong>字段配置系统</strong></td><td>每个字段可配置描述、逻辑类型、组件、更新控制、显示规则等，存入 <code>business_field_config</code>；支持导出 / 导入 JSON 跨环境同步</td></tr>
+<tr><td>🔗 <strong>前端动态关系绑定</strong></td><td>在管理页面直接「新建扩展表 / 绑定明细表」，无需修改任何 C# 代码，关系持久化到 <code>business_doc_relation</code>，随时可解绑</td></tr>
+<tr><td>🔐 <strong>独立登录入口</strong></td><td>独立于 Microi 主站账号体系的 bizadmin 超管入口，密码 SHA256 存 Redis，Token 24h TTL，支持多租户隔离</td></tr>
+</tbody>
+</table>
+
+### 主-明细-扩展表（静态声明方式）
+
+```csharp
+[BusinessTable("erp_sales_order", Comment = "ERP-销售订单")]
+[BusinessExtensionTable(typeof(SalesOrderExt))]                              // 1:1 扩展表
+[BusinessDetailTable(typeof(SalesOrderItem), "OrderId", PropertyName = "Items")] // 1:N 明细表
+public class SalesOrder : BusinessStatefulEntity<SalesOrderStatus> { ... }
+```
+
+保存 / 读取 / 级联删除时，框架自动处理三张表，**前端只需提交一个完整 JSON**：
+
+```json
+{
+  "CustomerName": "客户A", "TotalAmount": 9800,
+  "ExtNote": "发票备注（来自扩展表）",
+  "Items": [
+    { "ProductName": "产品1", "Qty": 2, "Price": 4900 }
+  ]
+}
+```
+
+### 前端管理页面
+
+| 页面 | 地址 | 说明 |
+|------|------|------|
+| 🔐 **登录页** | `/business-login.html` | bizadmin 独立登录，默认密码 `Admin@123`，支持在线改密 |
+| 🗂️ **结构管理** | `/business-schema.html` | 查看所有业务文档结构（主/明细/扩展表实时列）、动态加字段、前端新建/绑定/解绑关联表、字段配置（含导出/导入） |
+| 📄 **单据保存** | `/business-document.html` | 动态加载表单（基于 Schema + 字段配置），新增/编辑/加载含关联表的完整单据数据 |
+
+> 三个页面均为**纯静态 HTML**（Vue3 + Element Plus CDN），零构建、零依赖，直接部署到 `wwwroot` 即用。
+
+#### 纯前端新建扩展表流程
+
+1. 访问 `/business-login.html` 用 `bizadmin` 登录（首次默认密码 `Admin@123`）。
+2. 跳转至 `/business-schema.html`，在左侧选择目标业务文档（如 `erp_sales_order`）。
+3. 点击「**+ 新建/绑定关联表**」，填写表名、显示名称、选择类型（扩展/明细），确认绑定。
+4. 绑定成功后点击「**添加字段**」为新表建列（首次加字段时自动建表）。
+5. 再次查看 Schema，动态关系表会显示 **「动态绑定」** 标签，并可随时「**解绑**」。
+
+无需修改任何 C# 代码，保存/读取/级联删除均自动适配动态关系。
+
+### Schema 管理 API（`api/BusinessSchema/*`）
+
+| Action | 说明 |
+|--------|------|
+| `GetDocuments` | 列出所有业务文档 |
+| `GetDocumentSchema` | 返回主 + 明细 + 扩展（含动态关系）的完整表结构 |
+| `AddField` | 向指定表加列（多方言 DDL，幂等） |
+| `GetFieldConfigs` | 返回物理列 + 字段配置的合并结果 |
+| `SaveFieldConfigs` | 批量保存字段配置（upsert） |
+| `ExportFieldConfigs` | 导出字段配置 JSON |
+| `ImportFieldConfigs` | 导入字段配置 JSON（跨环境同步） |
+| `BindRelation` | **（新）** 动态绑定扩展表/明细表到主文档 |
+| `UnbindRelation` | **（新）** 解除动态关系绑定 |
+
+### 登录鉴权 API（`api/BusinessAuth/*`）
+
+| Action | 说明 |
+|--------|------|
+| `Login` | 登录（返回 Token） |
+| `Verify` | 验证 Token 是否有效 |
+| `SetPassword` | 修改超管密码（旧密码校验） |
+| `Logout` | 注销（Token 立即失效） |
+
+### 接入到主站点
+
+**Step 1** — 引用业务模块（`Microi.net.Api.csproj`）：
+
+```xml
+<ItemGroup>
+  <ProjectReference Include="..\..\src\ErpModule\Microi.Erp.csproj" />
+  <ProjectReference Include="..\..\src\MesModule\Microi.Mes.csproj" />
+</ItemGroup>
+```
+
+**Step 2** — `Program.cs` 装配：
+
+```csharp
+// builder.Services 阶段
+services.AddMicroiBusiness();
+
+// app.Build() 之后
+app.UseMicroiBusiness();
+```
+
+> `AddMicroiBusiness` 自动扫描模块程序集、调用 `ConfigureServices`，并把模块 Controller 注册为 `ApplicationPart`，`api/SalesOrder/*`、`api/WorkOrder/*` 等接口开箱可用。
+
+### 扩展新模块（如 WMS）
+
+1. 新建 `src/WmsModule/Microi.Wms.csproj`，引用 `Microi.Business.Common`。
+2. 实体继承 `BusinessStatefulEntity<TState>`，定义状态枚举与 `[BusinessTable]`。
+3. 服务继承 `BusinessStatefulServiceBase`，实现 `TableKey` + `ConfigureStateMachine`。
+4. 控制器继承 `BusinessControllerBase`。
+5. 新建 `WmsModule : BusinessModuleBase`，写 `Key / Name / Order`。
+6. 在 API 项目引用该模块——**无需改动任何内核代码**，启动时自动装配。
+
+> 详细文档见 [`src/README.md`](src/README.md)
+
+---
+
 ## 📚 相关文档
 
 | 资源 | 地址 |

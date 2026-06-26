@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>业务底座 · 登录</title>
+  <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css" />
+  <style>
+    html, body { margin: 0; height: 100%; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; background: linear-gradient(135deg, #1a237e 0%, #1565c0 50%, #0288d1 100%); }
+    .page { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .card { background: #fff; border-radius: 12px; padding: 40px 44px 36px; width: 360px; box-shadow: 0 20px 60px rgba(0,0,0,0.25); }
+    .logo { text-align: center; margin-bottom: 28px; }
+    .logo h2 { margin: 0 0 4px; font-size: 22px; color: #303133; }
+    .logo p { margin: 0; font-size: 13px; color: #909399; }
+    .form-item { margin-bottom: 16px; }
+    .form-item label { display: block; font-size: 13px; color: #606266; margin-bottom: 6px; }
+    .actions { margin-top: 24px; }
+    .tip { font-size: 12px; color: #909399; margin-top: 16px; text-align: center; line-height: 1.6; }
+    .change-pwd-link { text-align: center; margin-top: 12px; font-size: 13px; }
+    .change-pwd-link a { color: #409eff; cursor: pointer; text-decoration: none; }
+    .change-pwd-link a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div class="page">
+    <!-- 登录表单 -->
+    <div class="card" v-if="!showChangePwd">
+      <div class="logo">
+        <h2>业务底座管理</h2>
+        <p>Microi 吾码 · Business Base</p>
+      </div>
+
+      <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon style="margin-bottom:16px" />
+
+      <div class="form-item">
+        <label>OsClient（租户标识）</label>
+        <el-input v-model="osClient" placeholder="如 microi 或留空" size="default" clearable />
+      </div>
+      <div class="form-item">
+        <label>用户名</label>
+        <el-input v-model="username" placeholder="bizadmin" size="default" />
+      </div>
+      <div class="form-item">
+        <label>密码</label>
+        <el-input v-model="password" type="password" placeholder="默认 Admin@123" size="default" show-password
+                  @keyup.enter="login" />
+      </div>
+
+      <div class="actions">
+        <el-button type="primary" style="width:100%" size="large" :loading="loading" @click="login">
+          登 录
+        </el-button>
+      </div>
+
+      <p class="tip">首次使用默认密码 <b>Admin@123</b>，登录后请立即修改。</p>
+      <div class="change-pwd-link">
+        <a @click="showChangePwd = true">修改密码</a>
+      </div>
+    </div>
+
+    <!-- 修改密码表单 -->
+    <div class="card" v-else>
+      <div class="logo">
+        <h2>修改管理员密码</h2>
+        <p>Microi 吾码 · Business Base</p>
+      </div>
+
+      <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon style="margin-bottom:16px" />
+      <el-alert v-if="success" :title="success" type="success" :closable="false" show-icon style="margin-bottom:16px" />
+
+      <div class="form-item">
+        <label>OsClient（租户标识）</label>
+        <el-input v-model="osClient" placeholder="如 microi 或留空" size="default" clearable />
+      </div>
+      <div class="form-item">
+        <label>当前 Token（需先登录）</label>
+        <el-input v-model="token" placeholder="登录后自动填入" size="default" show-password />
+      </div>
+      <div class="form-item">
+        <label>旧密码</label>
+        <el-input v-model="oldPwd" type="password" size="default" show-password />
+      </div>
+      <div class="form-item">
+        <label>新密码（至少 6 位）</label>
+        <el-input v-model="newPwd" type="password" size="default" show-password @keyup.enter="changePwd" />
+      </div>
+
+      <div class="actions">
+        <el-button type="primary" style="width:100%" size="large" :loading="loading" @click="changePwd">
+          确认修改
+        </el-button>
+      </div>
+      <div class="change-pwd-link" style="margin-top:14px">
+        <a @click="showChangePwd = false">返回登录</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+<script src="https://unpkg.com/element-plus"></script>
+<script>
+  const { createApp, ref } = Vue;
+
+  /* 读取跳转目标（?redirect=...） */
+  function getRedirect() {
+    const p = new URLSearchParams(location.search);
+    return p.get('redirect') || 'business-schema.html';
+  }
+
+  createApp({
+    setup() {
+      const osClient     = ref(localStorage.getItem('biz_client') || '');
+      const username     = ref('bizadmin');
+      const password     = ref('');
+      const token        = ref(localStorage.getItem('biz_admin_token') || '');
+      const oldPwd       = ref('');
+      const newPwd       = ref('');
+      const loading      = ref(false);
+      const error        = ref('');
+      const success      = ref('');
+      const showChangePwd = ref(false);
+
+      async function post(action, body) {
+        const r = await fetch('/api/BusinessAuth/' + action, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        return r.json();
+      }
+
+      async function login() {
+        error.value = '';
+        if (!username.value || !password.value) { error.value = '请输入用户名和密码'; return; }
+        loading.value = true;
+        try {
+          const r = await post('Login', {
+            OsClient: osClient.value,
+            Username: username.value,
+            Password: password.value
+          });
+          if (r?.Code === 1) {
+            const t = r.Data?.Token;
+            const oc = r.Data?.OsClient || osClient.value;
+            localStorage.setItem('biz_admin_token', t);
+            localStorage.setItem('biz_client', oc);
+            token.value = t;
+            /* 跳转到目标页面并携带凭据 */
+            location.href = getRedirect() + '?biz_token=' + encodeURIComponent(t) + '&biz_client=' + encodeURIComponent(oc);
+          } else {
+            error.value = r?.Msg || '登录失败';
+          }
+        } catch (e) { error.value = '请求失败: ' + e.message; }
+        finally { loading.value = false; }
+      }
+
+      async function changePwd() {
+        error.value = ''; success.value = '';
+        if (!newPwd.value || newPwd.value.length < 6) { error.value = '新密码不能少于 6 位'; return; }
+        loading.value = true;
+        try {
+          const r = await post('SetPassword', {
+            OsClient: osClient.value,
+            Token: token.value,
+            OldPassword: oldPwd.value,
+            NewPassword: newPwd.value
+          });
+          if (r?.Code === 1) {
+            success.value = '密码修改成功，3 秒后跳转登录页';
+            oldPwd.value = ''; newPwd.value = '';
+            setTimeout(() => { showChangePwd.value = false; success.value = ''; }, 3000);
+          } else {
+            error.value = r?.Msg || '修改失败';
+          }
+        } catch (e) { error.value = '请求失败: ' + e.message; }
+        finally { loading.value = false; }
+      }
+
+      return { osClient, username, password, token, oldPwd, newPwd,
+               loading, error, success, showChangePwd, login, changePwd };
+    }
+  }).use(ElementPlus).mount('#app');
+</script>
+</body>
+</html>

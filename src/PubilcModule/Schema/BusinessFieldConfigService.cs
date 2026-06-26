@@ -107,6 +107,75 @@ namespace Microi.net.Business
             return new DosResult(1, new { added, updated }, $"已保存：新增 {added}，更新 {updated}。");
         }
 
+        /// <summary>
+        /// 导出某表的字段配置为可移植的 JSON 快照。
+        /// 仅包含已有配置记录的字段（未配置的字段使用平台默认值，无需导出）。
+        /// </summary>
+        public async Task<DosResult<List<BusinessFieldConfig>>> ExportConfigs(string tableName, string osClient, DbTrans trans = null)
+        {
+            if (string.IsNullOrWhiteSpace(tableName))
+                return new DosResult<List<BusinessFieldConfig>>(0, null, "TableName 不能为空。");
+
+            var result = await QueryConfigs(tableName, osClient, trans);
+            var configs = result?.Data ?? new List<BusinessFieldConfig>();
+
+            // 导出时清除 Id（导入到新环境时会重新生成），保留所有业务字段
+            var exportList = configs.Select(c => new BusinessFieldConfig
+            {
+                TableName = c.TableName,
+                FieldName = c.FieldName,
+                Description = c.Description,
+                LangId = c.LangId,
+                FieldType = c.FieldType,
+                SourceType = c.SourceType,
+                Component = c.Component,
+                IsPrimaryKey = c.IsPrimaryKey,
+                IsUpdate = c.IsUpdate,
+                ForceHidden = c.ForceHidden,
+                DefaultVisible = c.DefaultVisible,
+                Required = c.Required,
+                SortNo = c.SortNo
+            }).ToList();
+
+            return new DosResult<List<BusinessFieldConfig>>(1, exportList,
+                $"已导出 {exportList.Count} 条字段配置。");
+        }
+
+        /// <summary>
+        /// 批量导入字段配置（按 TableName+FieldName upsert）。
+        /// 支持跨环境迁移：从源环境导出 JSON，在目标环境调用此接口导入即可同步所有字段配置。
+        /// </summary>
+        public async Task<DosResult> ImportConfigs(List<BusinessFieldConfig> configs, string osClient, DbTrans trans = null)
+        {
+            if (configs == null || configs.Count == 0)
+                return new DosResult(0, null, "导入列表为空。");
+
+            var grouped = configs
+                .Where(c => !string.IsNullOrWhiteSpace(c.TableName) && !string.IsNullOrWhiteSpace(c.FieldName))
+                .GroupBy(c => c.TableName, StringComparer.OrdinalIgnoreCase);
+
+            int added = 0, updated = 0;
+            foreach (var group in grouped)
+            {
+                var saveParam = new BusinessFieldConfigSaveParam
+                {
+                    OsClient = osClient,
+                    TableName = group.Key,
+                    Fields = group.ToList()
+                };
+                var r = await SaveConfigs(saveParam, trans);
+                if (r?.Data != null)
+                {
+                    var jObj = Newtonsoft.Json.Linq.JObject.FromObject(r.Data);
+                    added += jObj["added"]?.ToObject<int>() ?? 0;
+                    updated += jObj["updated"]?.ToObject<int>() ?? 0;
+                }
+            }
+
+            return new DosResult(1, new { added, updated },
+                $"导入完成：新增 {added}，更新 {updated}。");
+        }
+
         /// <summary>删除某字段的配置。</summary>
         public async Task<DosResult> DeleteConfig(string tableName, string fieldName, string osClient, DbTrans trans = null)
         {

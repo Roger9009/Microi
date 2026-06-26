@@ -63,4 +63,16 @@ namespace Microi.net.Business
         /// <summary>字段配置列表。</summary>
         public List<BusinessFieldConfig> Fields { get; set; } = new List<BusinessFieldConfig>();
     }
+
+    /// <summary>
+    /// 字段配置批量导入参数。
+    /// </summary>
+    public class BusinessFieldConfigImportParam : BusinessParam
+    {
+        /// <summary>
+        /// 要导入的字段配置列表（从 ExportFieldConfigs 接口获取的 Data 数组直接传入）。
+        /// 每条记录必须包含 TableName + FieldName，其余字段按实际填写。
+        /// </summary>
+        public List<BusinessFieldConfig> Configs { get; set; } = new List<BusinessFieldConfig>();
+    }
 }

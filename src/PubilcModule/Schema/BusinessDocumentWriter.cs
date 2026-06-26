@@ -64,61 +64,108 @@ namespace Microi.net.Business
         public static async Task<DosResult> SaveRelationsAsync(JObject masterData, Type masterType, string masterTable, string osClient, DbTrans trans = null)
         {
             if (masterData == null) return new DosResult(0, null, "主单数据不能为空。");
-            if (masterType == null) return new DosResult(0, null, "主表实体类型不能为空。");
 
             var id = masterData["Id"]?.ToString();
             if (string.IsNullOrWhiteSpace(id))
                 return new DosResult(0, null, "缺少主单 Id，无法保存关联表。");
 
-            // 1) 保存扩展表（1:1，同 Id）
-            foreach (var ext in BusinessRelationResolver.GetExtensions(masterType))
+            // ── 静态扩展表（代码特性）──
+            if (masterType != null)
             {
-                var extTable = BusinessRelationResolver.GetTableName(ext.EntityType);
-                if (string.IsNullOrWhiteSpace(extTable)) continue;
+                foreach (var ext in BusinessRelationResolver.GetExtensions(masterType))
+                {
+                    var extTable = BusinessRelationResolver.GetTableName(ext.EntityType);
+                    if (string.IsNullOrWhiteSpace(extTable)) continue;
+                    var r = await UpsertExtensionAsync(masterData, extTable, masterTable, id, osClient, trans);
+                    if (r != null && r.Code != 1) return r;
+                }
 
-                var extObj = BuildExtensionObject(masterData, extTable, id, osClient);
-                if (extObj == null || extObj.Count == 0) continue;
-
-                var extExists = await ExistsAsync(extTable, id, osClient, trans);
-                var extResult = extExists
-                    ? await FormEngine.UptFormDataAsync(extTable, extObj, trans)
-                    : await FormEngine.AddFormDataAsync(extTable, extObj, trans);
-
-                if (extResult == null || extResult.Code != 1)
-                    return extResult ?? new DosResult(0, null, $"扩展表[{extTable}]保存失败。");
+                foreach (var detail in BusinessRelationResolver.GetDetails(masterType))
+                {
+                    var detailTable = BusinessRelationResolver.GetTableName(detail.EntityType);
+                    if (string.IsNullOrWhiteSpace(detailTable) || string.IsNullOrWhiteSpace(detail.ForeignKey)) continue;
+                    var propName = detail.PropertyName ?? detailTable;
+                    var incoming = masterData[propName] as JArray ?? new JArray();
+                    var r = await SyncDetailTableAsync(incoming, detailTable, detail.ForeignKey, id, osClient, trans);
+                    if (r == null || r.Code != 1) return r ?? new DosResult(0, null, $"明细表[{detailTable}]保存失败。");
+                }
             }
 
-            // 2) 保存明细表（1:N）
-            foreach (var detail in BusinessRelationResolver.GetDetails(masterType))
+            // ── 动态关系（business_doc_relation）──
+            if (!string.IsNullOrWhiteSpace(masterTable))
             {
-                var detailTable = BusinessRelationResolver.GetTableName(detail.EntityType);
-                if (string.IsNullOrWhiteSpace(detailTable) || string.IsNullOrWhiteSpace(detail.ForeignKey)) continue;
+                var dynamicRels = await new BusinessDocRelationService().GetRelationsAsync(masterTable, osClient);
 
-                var propName = detail.PropertyName ?? detailTable;
-                var incoming = masterData[propName] as JArray ?? new JArray();
-                var detailResult = await SyncDetailTableAsync(incoming, detailTable, detail.ForeignKey, id, osClient, trans);
-                if (detailResult == null || detailResult.Code != 1)
-                    return detailResult ?? new DosResult(0, null, $"明细表[{detailTable}]保存失败。");
+                var staticExtNames = masterType != null
+                    ? new HashSet<string>(BusinessRelationResolver.GetExtensions(masterType)
+                        .Select(e => BusinessRelationResolver.GetTableName(e.EntityType))
+                        .Where(t => !string.IsNullOrWhiteSpace(t)), StringComparer.OrdinalIgnoreCase)
+                    : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                var staticDetailNames = masterType != null
+                    ? new HashSet<string>(BusinessRelationResolver.GetDetails(masterType)
+                        .Select(d => BusinessRelationResolver.GetTableName(d.EntityType))
+                        .Where(t => !string.IsNullOrWhiteSpace(t)), StringComparer.OrdinalIgnoreCase)
+                    : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var rel in dynamicRels)
+                {
+                    if (string.IsNullOrWhiteSpace(rel.RelationTable)) continue;
+
+                    if (string.Equals(rel.RelationType, "Extension", StringComparison.OrdinalIgnoreCase)
+                        && !staticExtNames.Contains(rel.RelationTable))
+                    {
+                        var r = await UpsertExtensionAsync(masterData, rel.RelationTable, masterTable, id, osClient, trans);
+                        if (r != null && r.Code != 1) return r;
+                    }
+                    else if (string.Equals(rel.RelationType, "Detail", StringComparison.OrdinalIgnoreCase)
+                        && !staticDetailNames.Contains(rel.RelationTable)
+                        && !string.IsNullOrWhiteSpace(rel.ForeignKey))
+                    {
+                        var propName = rel.PropertyName ?? rel.RelationTable;
+                        var incoming = masterData[propName] as JArray ?? new JArray();
+                        var r = await SyncDetailTableAsync(incoming, rel.RelationTable, rel.ForeignKey, id, osClient, trans);
+                        if (r == null || r.Code != 1) return r ?? new DosResult(0, null, $"动态明细表[{rel.RelationTable}]保存失败。");
+                    }
+                }
             }
 
             return new DosResult(1, null, "关联表保存成功。");
         }
 
+        private static async Task<DosResult> UpsertExtensionAsync(JObject masterData, string extTable, string masterTable, string id, string osClient, DbTrans trans)
+        {
+            var extObj = BuildExtensionObject(masterData, extTable, masterTable, id, osClient);
+            if (extObj == null || extObj.Count == 0) return null;
+            var extExists = await ExistsAsync(extTable, id, osClient, trans);
+            return extExists
+                ? await FormEngine.UptFormDataAsync(extTable, extObj, trans)
+                : await FormEngine.AddFormDataAsync(extTable, extObj, trans);
+        }
+
         #region 私有
 
-        private static JObject BuildExtensionObject(JObject master, string extTable, string id, string osClient)
+        private static JObject BuildExtensionObject(JObject master, string extTable, string masterTable, string id, string osClient)
         {
             var sysFields = DefaultFields;
-            var columns = GetColumnNames(extTable, osClient);
-            if (columns == null || columns.Count == 0) return null;
+            var extColumns = GetColumnNames(extTable, osClient);
+            if (extColumns == null || extColumns.Count == 0) return null;
+
+            // 主表列名白名单：扩展表中与主表同名的列不写入（防止覆盖主表逻辑字段）
+            var masterColumns = GetColumnNames(masterTable, osClient);
+            var masterColSet = masterColumns != null
+                ? new HashSet<string>(masterColumns, StringComparer.OrdinalIgnoreCase)
+                : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             var extObj = new JObject();
             extObj["Id"] = id;
             extObj["OsClient"] = osClient;
 
-            foreach (var col in columns)
+            foreach (var col in extColumns)
             {
                 if (sysFields.Contains(col) || string.Equals(col, "Id", StringComparison.OrdinalIgnoreCase)) continue;
+                // 跳过与主表同名的列，避免将主表字段误写入扩展表
+                if (masterColSet.Contains(col)) continue;
                 if (master[col] != null)
                 {
                     extObj[col] = master[col];
@@ -201,5 +248,103 @@ namespace Microi.net.Business
         }
 
         #endregion
+
+        /// <summary>
+        /// 删除主单时级联清理扩展表（1:1）与明细表（1:N），防止产生孤儿数据。
+        /// 在 <see cref="BusinessServiceBase{TParam}.DelAsync"/> 的 OnAfterDelAsync 中调用。
+        /// </summary>
+        /// <param name="masterId">主单 Id</param>
+        /// <param name="masterType">主表实体类型（带关系特性）</param>
+        /// <param name="osClient">租户</param>
+        /// <param name="trans">共享事务</param>
+        public static async Task<DosResult> DeleteRelationsAsync(string masterId, Type masterType, string osClient, DbTrans trans = null,
+            string masterTable = null)
+        {
+            if (string.IsNullOrWhiteSpace(masterId)) return new DosResult(0, null, "缺少主单 Id，无法清理关联表。");
+
+            // ── 静态扩展表（代码特性）──
+            if (masterType != null)
+            {
+                foreach (var ext in BusinessRelationResolver.GetExtensions(masterType))
+                {
+                    var r = await DeleteExtRowAsync(BusinessRelationResolver.GetTableName(ext.EntityType), masterId, osClient, trans);
+                    if (r != null && r.Code != 1) return r;
+                }
+                foreach (var detail in BusinessRelationResolver.GetDetails(masterType))
+                {
+                    var r = await DeleteDetailRowsAsync(
+                        BusinessRelationResolver.GetTableName(detail.EntityType), detail.ForeignKey, masterId, osClient, trans);
+                    if (r != null && r.Code != 1) return r;
+                }
+            }
+
+            // ── 动态关系（business_doc_relation）──
+            var tbl = masterTable ?? (masterType != null ? BusinessRelationResolver.GetTableName(masterType) : null);
+            if (!string.IsNullOrWhiteSpace(tbl))
+            {
+                var staticExtNames = masterType != null
+                    ? new HashSet<string>(BusinessRelationResolver.GetExtensions(masterType)
+                        .Select(e => BusinessRelationResolver.GetTableName(e.EntityType))
+                        .Where(t => !string.IsNullOrWhiteSpace(t)), StringComparer.OrdinalIgnoreCase)
+                    : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                var staticDetailNames = masterType != null
+                    ? new HashSet<string>(BusinessRelationResolver.GetDetails(masterType)
+                        .Select(d => BusinessRelationResolver.GetTableName(d.EntityType))
+                        .Where(t => !string.IsNullOrWhiteSpace(t)), StringComparer.OrdinalIgnoreCase)
+                    : new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                var dynamicRels = await new BusinessDocRelationService().GetRelationsAsync(tbl, osClient);
+                foreach (var rel in dynamicRels)
+                {
+                    if (string.IsNullOrWhiteSpace(rel.RelationTable)) continue;
+                    if (string.Equals(rel.RelationType, "Extension", StringComparison.OrdinalIgnoreCase)
+                        && !staticExtNames.Contains(rel.RelationTable))
+                    {
+                        var r = await DeleteExtRowAsync(rel.RelationTable, masterId, osClient, trans);
+                        if (r != null && r.Code != 1) return r;
+                    }
+                    else if (string.Equals(rel.RelationType, "Detail", StringComparison.OrdinalIgnoreCase)
+                        && !staticDetailNames.Contains(rel.RelationTable)
+                        && !string.IsNullOrWhiteSpace(rel.ForeignKey))
+                    {
+                        var r = await DeleteDetailRowsAsync(rel.RelationTable, rel.ForeignKey, masterId, osClient, trans);
+                        if (r != null && r.Code != 1) return r;
+                    }
+                }
+            }
+
+            return new DosResult(1, null, "关联表级联删除完成。");
+        }
+
+        private static async Task<DosResult> DeleteExtRowAsync(string extTable, string id, string osClient, DbTrans trans)
+        {
+            if (string.IsNullOrWhiteSpace(extTable)) return null;
+            var exists = await ExistsAsync(extTable, id, osClient, trans);
+            if (!exists) return null;
+            return await FormEngine.DelFormDataAsync(extTable, new { Id = id, OsClient = osClient }, trans);
+        }
+
+        private static async Task<DosResult> DeleteDetailRowsAsync(string detailTable, string foreignKey, string masterId, string osClient, DbTrans trans)
+        {
+            if (string.IsNullOrWhiteSpace(detailTable) || string.IsNullOrWhiteSpace(foreignKey)) return null;
+            var listResult = await FormEngine.GetTableDataAsync(detailTable, new
+            {
+                OsClient = osClient,
+                _Where = new object[] { new object[] { foreignKey, "=", masterId } },
+                _PageSize = 100000
+            }, trans);
+            var rows = listResult?.Data as IEnumerable<dynamic>;
+            if (rows == null) return null;
+            foreach (var row in rows)
+            {
+                var rowObj = row as JObject ?? JObject.FromObject(row);
+                var rowId = rowObj["Id"]?.ToString();
+                if (string.IsNullOrWhiteSpace(rowId)) continue;
+                var r = await FormEngine.DelFormDataAsync(detailTable, new { Id = rowId, OsClient = osClient }, trans);
+                if (r != null && r.Code != 1) return r;
+            }
+            return null;
+        }
     }
 }

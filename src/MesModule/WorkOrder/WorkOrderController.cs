@@ -29,6 +29,14 @@ namespace Microi.net.Mes
             return Json(await _service.GetModelAsync(param));
         }
 
+        /// <summary>单条（含扩展表合并 + 工序明细集合 Items）</summary>
+        [HttpPost, HttpGet]
+        public async Task<JsonResult> GetModelWithRelations(WorkOrderParam param)
+        {
+            await FillContext(param);
+            return Json(await _service.GetModelWithRelationsAsync(param));
+        }
+
         /// <summary>新增（自动生成单据号，初始状态已创建）</summary>
         [HttpPost]
         public async Task<JsonResult> Add(WorkOrderParam param)

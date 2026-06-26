@@ -40,7 +40,37 @@ namespace Microi.net.Business
         public string PropertyName { get; set; }
         /// <summary>表是否已在数据库中物理存在。</summary>
         public bool Exists { get; set; }
+        /// <summary>动态关系记录 Id（来自 business_doc_relation）；静态（代码特性）时为 null。</summary>
+        public string RelationId { get; set; }
+        /// <summary>是否为动态关系（前端可解绑）。</summary>
+        public bool IsDynamic => !string.IsNullOrWhiteSpace(RelationId);
         public List<BusinessColumnInfo> Columns { get; set; } = new List<BusinessColumnInfo>();
+    }
+
+    /// <summary>绑定扩展/明细表到主表的请求参数。</summary>
+    public class BusinessBindRelationParam : BusinessParam
+    {
+        /// <summary>主表名。</summary>
+        public string MasterTable { get; set; }
+        /// <summary>关联表名（扩展表或明细表）。</summary>
+        public string RelationTable { get; set; }
+        /// <summary>关联类型：Extension / Detail。</summary>
+        public string RelationType { get; set; }
+        /// <summary>明细表外键列名（Detail 时必填）。</summary>
+        public string ForeignKey { get; set; }
+        /// <summary>明细集合在 JSON 中的属性名（选填）。</summary>
+        public string PropertyName { get; set; }
+        /// <summary>显示标签。</summary>
+        public string Label { get; set; }
+    }
+
+    /// <summary>解除关系绑定请求参数。</summary>
+    public class BusinessUnbindRelationParam : BusinessParam
+    {
+        /// <summary>business_doc_relation 记录 Id。</summary>
+        public string RelationId { get; set; }
+        /// <summary>主表名（用于缓存失效）。</summary>
+        public string MasterTable { get; set; }
     }
 
     /// <summary>一个业务文档的完整结构（主表 + 明细 + 扩展）。</summary>
