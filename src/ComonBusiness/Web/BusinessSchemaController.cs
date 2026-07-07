@@ -8,17 +8,31 @@ namespace Microi.net.Business.Common
     /// <summary>
     /// 业务表结构 API：查看主/细/扩展表结构、动态加字段。
     /// 路由：api/BusinessSchema/{action}
+    /// Schema 服务通过构造函数注入（由 CommonBusinessModule 注册为 Scoped）。
     /// </summary>
     public class BusinessSchemaController : BusinessControllerBase
     {
-        private readonly BusinessSchemaService _service = new BusinessSchemaService();
-        private readonly BusinessFieldConfigService _fieldConfigService = new BusinessFieldConfigService();
+        private readonly BusinessSchemaService _service;
+        private readonly BusinessFieldConfigService _fieldConfigService;
+        private readonly BusinessDocRelationService _relationService;
+
+        /// <summary>
+        /// 构造函数注入 Schema 服务。
+        /// </summary>
+        public BusinessSchemaController(
+            BusinessSchemaService service,
+            BusinessFieldConfigService fieldConfigService,
+            BusinessDocRelationService relationService)
+        {
+            _service = service;
+            _fieldConfigService = fieldConfigService;
+            _relationService = relationService;
+        }
 
         /// <summary>列出所有业务文档（主表）。</summary>
         [HttpGet, HttpPost]
         public async Task<JsonResult> GetDocuments(BusinessSchemaQueryParam param)
         {
-            await FillContext(param);
             return Json(_service.ListDocuments(param.OsClient));
         }
 
@@ -26,7 +40,6 @@ namespace Microi.net.Business.Common
         [HttpGet, HttpPost]
         public async Task<JsonResult> GetDocumentSchema(BusinessSchemaQueryParam param)
         {
-            await FillContext(param);
             return Json(_service.GetDocumentSchema(param.MasterTable, param.OsClient));
         }
 
@@ -34,7 +47,6 @@ namespace Microi.net.Business.Common
         [HttpGet, HttpPost]
         public async Task<JsonResult> GetTableColumns(BusinessSchemaQueryParam param)
         {
-            await FillContext(param);
             return Json(_service.GetTableColumns(param.TableName, param.OsClient));
         }
 
@@ -42,7 +54,6 @@ namespace Microi.net.Business.Common
         [HttpPost]
         public async Task<JsonResult> AddField(BusinessAddFieldParam param)
         {
-            await FillContext(param);
             return Json(_service.AddField(param));
         }
 
@@ -50,7 +61,6 @@ namespace Microi.net.Business.Common
         [HttpGet, HttpPost]
         public async Task<JsonResult> GetFieldConfigs(BusinessSchemaQueryParam param)
         {
-            await FillContext(param);
             return Json(await _fieldConfigService.GetResolvedFields(param.TableName, param.OsClient));
         }
 
@@ -58,7 +68,6 @@ namespace Microi.net.Business.Common
         [HttpPost]
         public async Task<JsonResult> SaveFieldConfigs(BusinessFieldConfigSaveParam param)
         {
-            await FillContext(param);
             return Json(await _fieldConfigService.SaveConfigs(param));
         }
 
@@ -66,7 +75,6 @@ namespace Microi.net.Business.Common
         [HttpPost]
         public async Task<JsonResult> DeleteFieldConfig(BusinessSchemaQueryParam param)
         {
-            await FillContext(param);
             return Json(await _fieldConfigService.DeleteConfig(param.TableName, param.FieldName, param.OsClient));
         }
 
@@ -77,7 +85,6 @@ namespace Microi.net.Business.Common
         [HttpGet, HttpPost]
         public async Task<JsonResult> ExportFieldConfigs(BusinessSchemaQueryParam param)
         {
-            await FillContext(param);
             return Json(await _fieldConfigService.ExportConfigs(param.TableName, param.OsClient));
         }
 
@@ -88,13 +95,10 @@ namespace Microi.net.Business.Common
         [HttpPost]
         public async Task<JsonResult> ImportFieldConfigs(BusinessFieldConfigImportParam param)
         {
-            await FillContext(param);
             return Json(await _fieldConfigService.ImportConfigs(param.Configs, param.OsClient));
         }
 
         // ── 动态关系绑定 ──────────────────────────────────────────────────────────
-
-        private readonly BusinessDocRelationService _relationService = new BusinessDocRelationService();
 
         /// <summary>
         /// 绑定扩展表或明细表到主文档（纯前端新建关系，无需改 C# 代码）。
@@ -103,7 +107,6 @@ namespace Microi.net.Business.Common
         [HttpPost]
         public async Task<JsonResult> BindRelation(BusinessBindRelationParam param)
         {
-            await FillContext(param);
             if (string.Equals(param.RelationType, "Extension", System.StringComparison.OrdinalIgnoreCase))
             {
                 return Json(await _relationService.BindExtensionAsync(
@@ -122,7 +125,6 @@ namespace Microi.net.Business.Common
         [HttpPost]
         public async Task<JsonResult> UnbindRelation(BusinessUnbindRelationParam param)
         {
-            await FillContext(param);
             return Json(await _relationService.UnbindAsync(param.RelationId, param.MasterTable, param.OsClient));
         }
     }

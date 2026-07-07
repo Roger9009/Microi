@@ -42,6 +42,17 @@ namespace Microi.net.Api
         public static Task<string> HeartbeatAsync() => LicSvc.HeartbeatAsync();
         public static (bool, int) CheckOfflineDays() => LicSvc.CheckOfflineDays();
 
+        public static object GetHeartbeatDiagnostics()
+        {
+            try { return LicSvc.GetHeartbeatDiagnostics(); }
+            catch { return new { Error = "Heartbeat diagnostics unavailable" }; }
+        }
+
+        public static bool GetIsRevokedByServer() => LicSvc.GetIsRevokedByServer();
+        public static bool GetIsGracePeriod() => LicSvc.GetIsGracePeriod();
+        public static int GetOfflineGraceDays() => LicSvc.GetOfflineGraceDays();
+        public static int GetHeartbeatIntervalHours() => LicSvc.GetHeartbeatIntervalHours();
+
         public static DosResult GenerateRegistrationPackage(string a, string b, string c, string d, string e, string f) => LicSvc.GenerateRegistrationPackage(a, b, c, d, e, f);
         public static Task<DosResult> ImportRegistrationFile(string fc) => LicSvc.ImportRegistrationFile(fc);
         public static Task<DosResult> ImportRegistrationFile(string hid, string ec) => LicSvc.ImportRegistrationFile(ec);

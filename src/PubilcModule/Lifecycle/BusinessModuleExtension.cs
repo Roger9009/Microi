@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -50,6 +51,13 @@ namespace Microi.net.Business
                 manager.MigrateOsClients.AddRange(options.MigrateOsClients);
                 services.AddSingleton(manager);
                 services.AddSingleton<IBusinessModuleRegistry>(manager);
+
+                // 全局注册业务上下文自动填充过滤器（通过 IConfigureOptions 的方式兼容
+                // 宿主已调用 AddControllersWithViews 的场景）
+                services.Configure<MvcOptions>(opt =>
+                {
+                    opt.Filters.Add<BusinessContextFilter>();
+                });
 
                 // 将模块所在程序集中的 Controller 注册为 ApplicationPart，使其 API 可被路由发现
                 var mvcBuilder = services.AddControllers();

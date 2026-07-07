@@ -28,6 +28,8 @@ namespace Microi.net.Business.Common
         private const string DefaultPassword = "Admin@123";
         private const string AdminUsername = "bizadmin";
         private static readonly int TokenTtlSeconds = 86400; // 24h
+        private const int MaxLoginAttempts = 5;
+        private const int LockoutMinutes = 15;
 
         // ── Redis 键 ──────────────────────────────────────────────────────────
 
@@ -35,6 +37,8 @@ namespace Microi.net.Business.Common
             => $"Microi:{osClient}:BizAdmin";
 
         private const string PwdHashField = "PwdHash";
+        private const string LoginFailField = "LoginFailCount";
+        private const string LockUntilField = "LockUntil";
 
         // ── 工具 ──────────────────────────────────────────────────────────────
 
@@ -67,6 +71,24 @@ namespace Microi.net.Business.Common
 
         private static long NowUnix() => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
+        private static void RecordLoginFailure(dynamic cache, string hashKey)
+        {
+            try
+            {
+                var failStr = CacheHashGet(cache, hashKey, LoginFailField);
+                var count = 0;
+                int.TryParse(failStr, out count);
+                count++;
+                CacheHashSet(cache, hashKey, LoginFailField, count.ToString());
+                if (count >= MaxLoginAttempts)
+                {
+                    var lockUntil = NowUnix() + LockoutMinutes * 60;
+                    CacheHashSet(cache, hashKey, LockUntilField, lockUntil.ToString());
+                }
+            }
+            catch { /* 缓存不可用时静默降级 */ }
+        }
+
         private string OsClientFromHeader()
         {
             Request.Headers.TryGetValue("OsClient", out var v);
@@ -87,19 +109,45 @@ namespace Microi.net.Business.Common
             var osClient = param?.OsClient ?? OsClientFromHeader();
             if (string.IsNullOrWhiteSpace(osClient)) osClient = "";
 
-            if (!string.Equals(param?.Username, AdminUsername, StringComparison.OrdinalIgnoreCase))
-                return Json(new DosResult(0, null, "用户名或密码错误。"));
-
             var cache = GetCache(osClient);
-            var storedHash = CacheHashGet(cache, AdminHashKey(osClient), PwdHashField)
+            var hashKey = AdminHashKey(osClient);
+
+            // 检查是否被锁定
+            var lockUntilStr = CacheHashGet(cache, hashKey, LockUntilField);
+            if (!string.IsNullOrWhiteSpace(lockUntilStr))
+            {
+                if (long.TryParse(lockUntilStr, out long lockUntil) && NowUnix() < lockUntil)
+                {
+                    var remainMin = (lockUntil - NowUnix()) / 60 + 1;
+                    return Json(new DosResult(0, null, $"账户已被锁定，请 {remainMin} 分钟后再试。"));
+                }
+                // 锁定已过期，清除锁定标记
+                CacheHashDelete(cache, hashKey, LockUntilField);
+                CacheHashDelete(cache, hashKey, LoginFailField);
+            }
+
+            if (!string.Equals(param?.Username, AdminUsername, StringComparison.OrdinalIgnoreCase))
+            {
+                RecordLoginFailure(cache, hashKey);
+                return Json(new DosResult(0, null, "用户名或密码错误。"));
+            }
+
+            var storedHash = CacheHashGet(cache, hashKey, PwdHashField)
                              ?? Sha256(DefaultPassword);
 
             if (!string.Equals(storedHash, Sha256(param.Password), StringComparison.Ordinal))
+            {
+                RecordLoginFailure(cache, hashKey);
                 return Json(new DosResult(0, null, "用户名或密码错误。"));
+            }
+
+            // 登录成功，清除失败计数
+            CacheHashDelete(cache, hashKey, LoginFailField);
+            CacheHashDelete(cache, hashKey, LockUntilField);
 
             var token = Guid.NewGuid().ToString("N");
             var expiry = (NowUnix() + TokenTtlSeconds).ToString();
-            CacheHashSet(cache, AdminHashKey(osClient), token, expiry);
+            CacheHashSet(cache, hashKey, token, expiry);
 
             return Json(new DosResult(1, new { Token = token, OsClient = osClient }, "登录成功。"));
         }

@@ -42,6 +42,7 @@ namespace Microi.License
         private const string GraceFileName = ".lic_grace";
         private const string GraceDbKey = "__LICENSE_GRACE_START__";
         private const string ValidProofDbKey = "__LICENSE_VALID_PROOF__";
+        private const string GraceHmacKey = "microi-grace-hmac-2026-v2";
 
         public const int HeartbeatIntervalHours = 12;
         public const int OfflineGraceDays = 30;
@@ -110,7 +111,7 @@ namespace Microi.License
                 {
                     if (!File.Exists(gracePath))
                     {
-                        try { File.WriteAllText(gracePath, now.ToString("O") + "|bootstrap"); } catch { }
+                        try { File.WriteAllText(gracePath, SignGraceContent(now.ToString("O") + "|bootstrap"), Encoding.UTF8); } catch { }
                         Console.WriteLine($"Microi：【🆕License引导】首次部署，自动授予 {GracePeriodDays} 天初始宽限期。请尽快生成密钥对并自签发 License！");
                         return (true, GracePeriodDays);
                     }
@@ -122,7 +123,7 @@ namespace Microi.License
             {
                 if (!File.Exists(gracePath))
                 {
-                    try { File.WriteAllText(gracePath, now.ToString("O") + "|init"); } catch { }
+                    try { File.WriteAllText(gracePath, SignGraceContent(now.ToString("O") + "|init"), Encoding.UTF8); } catch { }
                     return (true, GracePeriodDays);
                 }
             }
@@ -132,8 +133,13 @@ namespace Microi.License
             {
                 if (File.Exists(gracePath))
                 {
-                    var parts = File.ReadAllText(gracePath).Trim().Split('|');
-                    if (parts.Length >= 1 && DateTime.TryParse(parts[0], out var fd)) fileDate = fd.ToUniversalTime();
+                    var fileContent = File.ReadAllText(gracePath, Encoding.UTF8).Trim();
+                    var verified = VerifyAndExtractGraceContent(fileContent);
+                    if (verified != null)
+                    {
+                        var parts = verified.Split('|');
+                        if (parts.Length >= 1 && DateTime.TryParse(parts[0], out var fd)) fileDate = fd.ToUniversalTime();
+                    }
                 }
             }
             catch { }
@@ -157,7 +163,7 @@ namespace Microi.License
             if (fileDate == null && dbDate == null)
             {
                 firstSeen = now;
-                try { File.WriteAllText(gracePath, now.ToString("O") + "|init"); } catch { }
+                try { File.WriteAllText(gracePath, SignGraceContent(now.ToString("O") + "|init"), Encoding.UTF8); } catch { }
             }
             else
             {
@@ -165,7 +171,7 @@ namespace Microi.License
                     firstSeen = fileDate.Value < dbDate.Value ? fileDate.Value : dbDate.Value;
                 else firstSeen = fileDate ?? dbDate ?? now;
                 if (!File.Exists(gracePath))
-                    try { File.WriteAllText(gracePath, firstSeen.ToString("O") + "|restored"); } catch { }
+                    try { File.WriteAllText(gracePath, SignGraceContent(firstSeen.ToString("O") + "|restored"), Encoding.UTF8); } catch { }
             }
 
             var daysLeft = GracePeriodDays - (int)(now - firstSeen).TotalDays;
@@ -186,8 +192,13 @@ namespace Microi.License
                 var graceStart = DateTime.UtcNow.ToString("O");
                 if (File.Exists(gracePath))
                 {
-                    var parts = File.ReadAllText(gracePath).Trim().Split('|');
-                    if (parts.Length >= 1) graceStart = parts[0];
+                    var fileContent = File.ReadAllText(gracePath, Encoding.UTF8).Trim();
+                    var verified = VerifyAndExtractGraceContent(fileContent);
+                    if (verified != null)
+                    {
+                        var parts = verified.Split('|');
+                        if (parts.Length >= 1) graceStart = parts[0];
+                    }
                 }
                 var val = AesEncrypt(graceStart, DeriveDbKey());
                 db.FromSql(@"INSERT INTO diy_license (Id, HID, Status, LicenseContent, CreateTime)
@@ -243,6 +254,29 @@ namespace Microi.License
             };
         }
 
+        /// <summary>
+        /// 轻量心跳诊断（不触发 Verify），供前端仪表盘快速展示。
+        /// </summary>
+        public static object GetHeartbeatDiagnostics()
+        {
+            var (overLimit, offlineDays) = CheckOfflineDays();
+            return new
+            {
+                IsRevokedByServer = _revokedByServer,
+                IsGracePeriod = _isGracePeriod,
+                IsOpenSource = IsOpenSourceMode(),
+                OfflineDays = offlineDays,
+                OfflineLimitExceeded = overLimit,
+                HeartbeatIntervalHours = HeartbeatIntervalHours,
+                OfflineGraceDays = OfflineGraceDays
+            };
+        }
+
+        public static bool GetIsRevokedByServer() => _revokedByServer;
+        public static bool GetIsGracePeriod() => _isGracePeriod;
+        public static int GetOfflineGraceDays() => OfflineGraceDays;
+        public static int GetHeartbeatIntervalHours() => HeartbeatIntervalHours;
+
         public static DosResult WriteLicenseFile(string licenseContent)
         {
             if (string.IsNullOrWhiteSpace(licenseContent)) return new DosResult(0, null, "License内容不能为空");
@@ -266,7 +300,7 @@ namespace Microi.License
                 lock (_verifyLock) { _cachedVerify = null; }
                 _revokedByServer = false;
                 try { var hbPath = Path.Combine(AppContext.BaseDirectory, HeartbeatFileName);
-                    if (File.Exists(hbPath)) File.WriteAllText(hbPath, $"{DateTime.UtcNow:O}|Issued"); } catch { }
+                    if (File.Exists(hbPath)) File.WriteAllText(hbPath, AesEncrypt($"{DateTime.UtcNow:O}|Issued", DeriveFileKey(hid)), Encoding.UTF8); } catch { }
                 return new DosResult(1, new { Path = path }, "License文件写入成功（AES加密存储）");
             }
             catch (Exception ex) { return new DosResult(0, null, "写入失败：" + ex.Message); }
@@ -306,7 +340,10 @@ namespace Microi.License
             if (!File.Exists(hp)) return;
             try
             {
-                var parts = File.ReadAllText(hp).Trim().Split('|');
+                var encrypted = File.ReadAllText(hp, Encoding.UTF8).Trim();
+                var decrypted = AesDecrypt(encrypted, DeriveFileKey(GetHardwareId()));
+                if (string.IsNullOrWhiteSpace(decrypted)) return;
+                var parts = decrypted.Split('|');
                 if (parts.Length >= 2 && parts[1].Trim() == LicenseStatus.Revoked)
                 {
                     _revokedByServer = true;
@@ -335,11 +372,23 @@ namespace Microi.License
                 if (resp.IsSuccessStatusCode)
                 {
                     var body = await resp.Content.ReadAsStringAsync();
-                    var obj = JsonConvert.DeserializeObject<dynamic>(body);
-                    var status = obj?.Status?.ToString();
-                    File.WriteAllText(hp, $"{DateTime.UtcNow:O}|{status}");
-                    if (status == "Revoked") { _revokedByServer = true; return "revoked"; }
-                    _revokedByServer = false; return "ok:" + status;
+                    try
+                    {
+                        var respObj = JsonConvert.DeserializeObject<System.Collections.Generic.Dictionary<string, object>>(body);
+                        string status = null;
+                        if (respObj != null && respObj.TryGetValue("Status", out var statusObj))
+                            status = statusObj?.ToString();
+                        var hbPlain = $"{DateTime.UtcNow:O}|{status}";
+                        File.WriteAllText(hp, AesEncrypt(hbPlain, DeriveFileKey(hid)), Encoding.UTF8);
+                        if (status == "Revoked") { _revokedByServer = true; return "revoked"; }
+                        _revokedByServer = false; return "ok:" + status;
+                    }
+                    catch
+                    {
+                        // 服务器返回非标准 JSON，记录原始 body 但不中断
+                        File.WriteAllText(hp, AesEncrypt($"{DateTime.UtcNow:O}|unknown", DeriveFileKey(hid)), Encoding.UTF8);
+                        return "server_parse_error";
+                    }
                 }
                 return "server_error:" + resp.StatusCode;
             }
@@ -352,7 +401,10 @@ namespace Microi.License
             if (!File.Exists(hp)) return (false, 0);
             try
             {
-                var line = File.ReadAllText(hp).Split('|')[0];
+                var encrypted = File.ReadAllText(hp, Encoding.UTF8).Trim();
+                var decrypted = AesDecrypt(encrypted, DeriveFileKey(GetHardwareId()));
+                if (string.IsNullOrWhiteSpace(decrypted) || !decrypted.Contains('|')) return (false, 0);
+                var line = decrypted.Split('|')[0];
                 if (!DateTime.TryParse(line, out var lastHb)) return (false, 0);
                 var days = (int)(DateTime.UtcNow - lastHb.ToUniversalTime()).TotalDays;
                 return (days > OfflineGraceDays, days);
@@ -817,9 +869,17 @@ namespace Microi.License
 
         private static byte[] DeriveDbKey()
         {
-            var ek = Environment.GetEnvironmentVariable("MICROI_LICENSE_ENCRYPT_KEY") ?? "";
+            var ek = Environment.GetEnvironmentVariable("MICROI_LICENSE_ENCRYPT_KEY");
+            if (string.IsNullOrWhiteSpace(ek))
+            {
+                Console.Error.WriteLine("Microi.License：【❌严重】环境变量 MICROI_LICENSE_ENCRYPT_KEY 未设置！");
+                Console.Error.WriteLine("  请设置一个 32 字符以上的随机字符串作为数据库加密密钥。");
+                Console.Error.WriteLine("  示例（Linux ）：export MICROI_LICENSE_ENCRYPT_KEY=\"your-random-32-char-string-here\"");
+                Console.Error.WriteLine("  示例（Windows）：$env:MICROI_LICENSE_ENCRYPT_KEY = \"your-random-32-char-string-here\"");
+                throw new InvalidOperationException("MICROI_LICENSE_ENCRYPT_KEY 环境变量未设置，无法启动。");
+            }
             using var derive = new Rfc2898DeriveBytes(
-                Encoding.UTF8.GetBytes(string.IsNullOrWhiteSpace(ek) ? "microi-db-default-enc-2026" : ek),
+                Encoding.UTF8.GetBytes(ek),
                 Encoding.UTF8.GetBytes("MicroiDbSalt!!__"), 100_000, HashAlgorithmName.SHA256);
             return derive.GetBytes(32);
         }
@@ -860,6 +920,33 @@ namespace Microi.License
             var key = HardwareHelper.Sha256Hex(hid + "microi-valid-proof-2026");
             using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(key));
             return BitConverter.ToString(hmac.ComputeHash(Encoding.UTF8.GetBytes(expStr + hid))).Replace("-", "").ToLowerInvariant();
+        }
+
+        /// <summary>
+        /// 计算宽限期文件的 HMAC 签名（防篡改）。
+        /// content 格式：timestamp|reason
+        /// </summary>
+        private static string SignGraceContent(string content)
+        {
+            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(GraceHmacKey));
+            var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(content));
+            return content + "|" + Convert.ToBase64String(hash);
+        }
+
+        /// <summary>
+        /// 验证并解析宽限期文件内容。签名无效或格式错误返回 null。
+        /// </summary>
+        private static string VerifyAndExtractGraceContent(string fileContent)
+        {
+            if (string.IsNullOrWhiteSpace(fileContent)) return null;
+            var lastPipe = fileContent.LastIndexOf('|');
+            if (lastPipe < 0) return null;
+            var payload = fileContent.Substring(0, lastPipe);
+            var sig = fileContent.Substring(lastPipe + 1);
+            using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(GraceHmacKey));
+            var expected = Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(payload)));
+            if (sig != expected) return null; // 签名不匹配，文件被篡改
+            return payload;
         }
 
         private static DateTime? ReadValidProof()

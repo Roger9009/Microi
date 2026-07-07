@@ -24,9 +24,36 @@ namespace Microi.net.Api
     {
         private readonly ICaptcha _captcha;
 
+        /// <summary>
+        /// 匿名端点 IP 限流表：每 IP 每分钟最多 10 次请求
+        /// </summary>
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, short> _anonThrottle
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, short>();
+        private static DateTime _throttleResetTime = DateTime.UtcNow;
+
         public LicenseController(ICaptcha captcha)
         {
             _captcha = captcha;
+        }
+
+        /// <summary>
+        /// 匿名端点限流检查：每 IP 每分钟最多 10 次。
+        /// 返回 true 表示放行，false 表示被限流。
+        /// </summary>
+        private bool CheckAnonRateLimit()
+        {
+            // 每分钟重置
+            var now = DateTime.UtcNow;
+            if ((now - _throttleResetTime).TotalMinutes >= 1)
+            {
+                _anonThrottle.Clear();
+                _throttleResetTime = now;
+            }
+            var ip = HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',').FirstOrDefault()?.Trim()
+                ?? HttpContext.Connection.RemoteIpAddress?.ToString()
+                ?? "unknown";
+            var count = _anonThrottle.AddOrUpdate(ip, 1, (_, c) => (short)(c + 1));
+            return count <= 10;
         }
 
         /// <summary>
@@ -124,16 +151,79 @@ namespace Microi.net.Api
 
         /// <summary>
         /// 获取 License 模块的可配置项（匿名可访问）
-        /// 前端通过此接口读�?ContactEmail 等，避免硬编�?
+        /// 前端通过此接口读取 ContactEmail 等，避免硬编码
         /// </summary>
         [HttpGet]
         [AllowAnonymous]
         public JsonResult GetConfig()
         {
+            if (!CheckAnonRateLimit()) return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
             return Json(new DosResult(1, new
             {
-                ContactEmail = LicenseService.ContactEmail
+                ContactEmail = LicenseService.ContactEmail,
+                HeartbeatIntervalHours = LicenseService.HeartbeatIntervalHours,
+                OfflineGraceDays = LicenseService.OfflineGraceDays
             }));
+        }
+
+        /// <summary>
+        /// 获取 License 运行状态摘要（轻量，不触发完整 Verify），
+        /// 供前端仪表盘/监控面板快速展示。
+        /// 匿名可访问。
+        /// GET /api/License/GetStatus
+        /// </summary>
+        [HttpGet, HttpPost]
+        [AllowAnonymous]
+        public JsonResult GetStatus()
+        {
+            if (!CheckAnonRateLimit()) return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
+            try
+            {
+                var verifyResult = LicenseService.Verify();
+                var (graceAllowed, graceDaysLeft) = LicenseService.CheckGracePeriod();
+                var (overOffline, offlineDays) = LicenseService.CheckOfflineDays();
+
+                return Json(new DosResult(1, new
+                {
+                    IsLicensed = verifyResult.Valid,
+                    IsGracePeriod = LicenseService.GetIsGracePeriod(),
+                    IsOpenSource = LicenseService.IsOpenSourceMode(),
+                    HID = verifyResult.HID,
+                    Company = verifyResult.Company,
+                    ProductType = verifyResult.ProductType,
+                    ExpirationDate = verifyResult.ExpirationDate?.ToString("yyyy-MM-dd HH:mm:ss"),
+                    DaysRemaining = verifyResult.DaysRemaining,
+                    GraceDaysLeft = graceAllowed ? graceDaysLeft : 0,
+                    IsRevokedByServer = LicenseService.GetIsRevokedByServer(),
+                    OfflineDays = offlineDays,
+                    OfflineGraceDays = LicenseService.GetOfflineGraceDays()
+                }));
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "获取状态失败: " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 获取 License 心跳状态（不触发 Verify），供前端监控面板展示。
+        /// 匿名可访问。
+        /// GET /api/License/GetHeartbeatStatus
+        /// </summary>
+        [HttpGet, HttpPost]
+        [AllowAnonymous]
+        public JsonResult GetHeartbeatStatus()
+        {
+            if (!CheckAnonRateLimit()) return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
+            try
+            {
+                var hbDiag = LicenseService.GetHeartbeatDiagnostics();
+                return Json(new DosResult(1, hbDiag));
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "获取心跳状态失败: " + ex.Message));
+            }
         }
 
         /// <summary>
@@ -143,6 +233,7 @@ namespace Microi.net.Api
         [AllowAnonymous]
         public JsonResult GetHardwareId()
         {
+            if (!CheckAnonRateLimit()) return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
             try
             {
                 var hid = LicenseService.GetHardwareId();
@@ -161,6 +252,7 @@ namespace Microi.net.Api
         [AllowAnonymous]
         public JsonResult Verify()
         {
+            if (!CheckAnonRateLimit()) return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
             try
             {
                 var data = LicenseService.Verify();
@@ -197,6 +289,7 @@ namespace Microi.net.Api
         [AllowAnonymous]
         public async Task<JsonResult> Check([FromBody] LicenseCheckRequest request)
         {
+            if (!CheckAnonRateLimit()) return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
             try
             {
                 var result = await LicenseService.CheckAsync(request?.HID);
@@ -216,6 +309,7 @@ namespace Microi.net.Api
         [AllowAnonymous]
         public async Task<JsonResult> QueryApplication([FromBody] LicenseCheckRequest request)
         {
+            if (!CheckAnonRateLimit()) return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
             try
             {
                 var result = await LicenseService.QueryApplicationAsync(request?.HID);
@@ -235,6 +329,7 @@ namespace Microi.net.Api
         [AllowAnonymous]
         public JsonResult WriteLicenseFile([FromBody] WriteLicenseFileRequest request)
         {
+            if (!CheckAnonRateLimit()) return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
             try
             {
                 var result = LicenseService.WriteLicenseFile(request?.LicenseContent);

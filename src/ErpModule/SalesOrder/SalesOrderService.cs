@@ -8,11 +8,21 @@ using Newtonsoft.Json.Linq;
 namespace Microi.net.Erp
 {
     /// <summary>
-    /// 销售订单业务服务（示例）。
-    /// 展示如何同时使用：实体 CRUD 生命周期钩子 + 单据状态机生命周期。
+    /// 销售订单业务服务。
+    /// 展示如何同时使用：实体 CRUD 生命周期钩子 + 单据状态机生命周期 + 构造函数注入。
     /// </summary>
     public class SalesOrderService : BusinessStatefulServiceBase<SalesOrderParam, SalesOrderStatus>
     {
+        private readonly IBillNoService _billNoService;
+
+        /// <summary>
+        /// 构造函数注入 IBillNoService（由 CommonBusinessModule 注册为 Singleton）。
+        /// </summary>
+        public SalesOrderService(IBillNoService billNoService)
+        {
+            _billNoService = billNoService;
+        }
+
         protected override string TableKey => "erp_sales_order";
 
         /// <summary>主表实体类型，启用扩展表合并与明细加载（GetModelWithRelationsAsync）。</summary>
@@ -62,8 +72,7 @@ namespace Microi.net.Erp
             if (string.IsNullOrWhiteSpace(param.CustomerId))
                 return new DosResult(0, null, "客户不能为空。");
 
-            var billNoService = MicroiEngine.GetService<IBillNoService>();
-            param.BillNo = await billNoService.GenerateAsync("SO", param.OsClient);
+            param.BillNo = await _billNoService.GenerateAsync("SO", param.OsClient);
             param.Status = (int)SalesOrderStatus.Draft;
             param.OrderDate = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
             return null;

@@ -441,6 +441,20 @@ export const asyncRoutes = [
             }
         ]
     },
+    // License 授权总控台（管理员）
+    {
+        path: "/license-admin",
+        component: Layout,
+        hidden: true,
+        children: [
+            {
+                path: "/license-admin",
+                name: "license_admin_console",
+                component: () => import("@/views/system/LicenseAdminConsole.vue"),
+                meta: { title: "授权总控台" }
+            }
+        ]
+    },
     // OpenClaw 管理系统（使用主框架 Layout，菜单由后端或侧边栏统一管理）
     {
         path: "/openclaw",
@@ -457,6 +471,22 @@ export const asyncRoutes = [
             { path: "nodes", name: "openclaw_nodes", component: () => import("@/views/openclaw/nodes/index.vue"), meta: { title: "节点管理" } },
             { path: "llm", name: "openclaw_llm", component: () => import("@/views/openclaw/llm/index.vue"), meta: { title: "AI模型配置" } },
             { path: "settings", name: "openclaw_settings", component: () => import("@/views/openclaw/settings/index.vue"), meta: { title: "系统设置" } }
+        ]
+    },
+    // 业务底座管理页面（Business Base）
+    {
+        path: "/business",
+        component: Layout,
+        hidden: true,
+        redirect: "/business/console",
+        meta: { title: "业务底座", icon: "Setting" },
+        children: [
+            { path: "console", name: "business_console", component: () => import("@/views/business/BusinessBaseConsole.vue"), meta: { title: "总控台" } },
+            { path: "doc/list", name: "business_doc_list", component: () => import("@/views/business/BusinessDocList.vue"), meta: { title: "文档管理" } },
+            { path: "doc/:action/:table", name: "business_doc_editor", component: () => import("@/views/business/BusinessDocEditor.vue"), meta: { title: "文档编辑" } },
+            { path: "doc/:action/:table/:id", name: "business_doc_editor_id", component: () => import("@/views/business/BusinessDocEditor.vue"), meta: { title: "文档编辑" } },
+            { path: "schema", name: "business_schema", component: () => import("@/views/business/BusinessSchemaManager.vue"), meta: { title: "表结构管理" } },
+            { path: "monitor", name: "business_monitor", component: () => import("@/views/business/BusinessMonitorDashboard.vue"), meta: { title: "模块监控" } }
         ]
     },
     // Vue Router 4: 使用 pathMatch 替代 * ，此路由放到最后

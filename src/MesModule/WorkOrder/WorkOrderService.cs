@@ -8,10 +8,21 @@ using Newtonsoft.Json.Linq;
 namespace Microi.net.Mes
 {
     /// <summary>
-    /// 生产工单业务服务（示例）。
+    /// 生产工单业务服务。
+    /// 使用构造函数注入方式获取依赖服务。
     /// </summary>
     public class WorkOrderService : BusinessStatefulServiceBase<WorkOrderParam, WorkOrderStatus>
     {
+        private readonly IBillNoService _billNoService;
+
+        /// <summary>
+        /// 构造函数注入 IBillNoService。
+        /// </summary>
+        public WorkOrderService(IBillNoService billNoService)
+        {
+            _billNoService = billNoService;
+        }
+
         protected override string TableKey => "mes_work_order";
 
         /// <summary>主表实体类型，启用扩展表合并与明细加载/保存。</summary>
@@ -56,8 +67,7 @@ namespace Microi.net.Mes
             if (string.IsNullOrWhiteSpace(param.ProductId))
                 return new DosResult(0, null, "产品不能为空。");
 
-            var billNoService = MicroiEngine.GetService<IBillNoService>();
-            param.BillNo = await billNoService.GenerateAsync("WO", param.OsClient);
+            param.BillNo = await _billNoService.GenerateAsync("WO", param.OsClient);
             param.Status = (int)WorkOrderStatus.Created;
             return null;
         }

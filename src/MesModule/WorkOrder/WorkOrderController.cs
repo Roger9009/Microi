@@ -6,18 +6,26 @@ using Newtonsoft.Json.Linq;
 namespace Microi.net.Mes
 {
     /// <summary>
-    /// 生产工单 API（示例）。
+    /// 生产工单 API。
     /// 路由：api/WorkOrder/{action}
+    /// 上下文自动填充由全局 BusinessContextFilter 处理，无需手动调用 FillContext。
     /// </summary>
     public class WorkOrderController : BusinessControllerBase
     {
-        private readonly WorkOrderService _service = new WorkOrderService();
+        private readonly WorkOrderService _service;
+
+        /// <summary>
+        /// 构造函数注入 WorkOrderService（由 MesModule.ConfigureServices 注册为 Scoped）。
+        /// </summary>
+        public WorkOrderController(WorkOrderService service)
+        {
+            _service = service;
+        }
 
         /// <summary>列表</summary>
         [HttpPost, HttpGet]
         public async Task<JsonResult> GetList(WorkOrderParam param)
         {
-            await FillContext(param);
             return Json(await _service.GetListAsync(param));
         }
 
@@ -25,7 +33,6 @@ namespace Microi.net.Mes
         [HttpPost, HttpGet]
         public async Task<JsonResult> GetModel(WorkOrderParam param)
         {
-            await FillContext(param);
             return Json(await _service.GetModelAsync(param));
         }
 
@@ -33,7 +40,6 @@ namespace Microi.net.Mes
         [HttpPost, HttpGet]
         public async Task<JsonResult> GetModelWithRelations(WorkOrderParam param)
         {
-            await FillContext(param);
             return Json(await _service.GetModelWithRelationsAsync(param));
         }
 
@@ -41,7 +47,6 @@ namespace Microi.net.Mes
         [HttpPost]
         public async Task<JsonResult> Add(WorkOrderParam param)
         {
-            await FillContext(param);
             return Json(await _service.AddAsync(param));
         }
 
@@ -49,7 +54,6 @@ namespace Microi.net.Mes
         [HttpPost]
         public async Task<JsonResult> Upt(WorkOrderParam param)
         {
-            await FillContext(param);
             return Json(await _service.UptAsync(param));
         }
 
@@ -57,7 +61,6 @@ namespace Microi.net.Mes
         [HttpPost]
         public async Task<JsonResult> Del(WorkOrderParam param)
         {
-            await FillContext(param);
             return Json(await _service.DelAsync(param));
         }
 
@@ -68,9 +71,9 @@ namespace Microi.net.Mes
         [HttpPost]
         public async Task<JsonResult> Save([FromBody] JObject data)
         {
-            var ctx = await GetCurrentContext();
-            data["OsClient"] = ctx.OsClient;
-            return Json(await _service.SaveWithRelationsAsync(data, ctx.OsClient));
+            var (osClient, _) = await GetCurrentContext();
+            data["OsClient"] = osClient;
+            return Json(await _service.SaveWithRelationsAsync(data, osClient));
         }
 
         /// <summary>
@@ -80,7 +83,6 @@ namespace Microi.net.Mes
         [HttpPost]
         public async Task<JsonResult> Execute(WorkOrderParam param)
         {
-            await FillContext(param);
             return Json(await _service.ExecuteTriggerAsync(param));
         }
     }
