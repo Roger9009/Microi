@@ -81,7 +81,7 @@ namespace Microi.net.Business.Common
             }
             catch (Exception ex)
             {
-                return Json(new DosResult(0, null, "获取仪表盘数据失败: " + ex.Message));
+                return Json(new DosResult(0, null, "获取仪表盘数据失败，请稍后重试。"));
             }
         }
 

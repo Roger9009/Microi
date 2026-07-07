@@ -2,15 +2,15 @@
     <div class="business-base-console">
         <div class="header">
             <h3>业务底座总控台</h3>
-            <el-button type="primary" @click="refreshAll" :loading="loading">
+            <el-button type="primary" @click="refreshCurrentTab" :loading="loading">
                 <el-icon><Refresh /></el-icon> 刷新
             </el-button>
         </div>
 
-        <el-tabs v-model="activeTab" type="border-card">
-            <!-- ════════════════════════════════════════════ -->
+        <el-tabs v-model="activeTab" type="border-card" @tab-change="onTabChange">
+            <!-- ═══════════════════════════════════════════ -->
             <!-- Tab 1: 仪表盘概览 -->
-            <!-- ════════════════════════════════════════════ -->
+            <!-- ═══════════════════════════════════════════ -->
             <el-tab-pane label="仪表盘概览" name="overview">
                 <!-- 状态统计卡片 -->
                 <el-row :gutter="16" style="margin-bottom:16px;">
@@ -91,16 +91,16 @@
                 </el-card>
             </el-tab-pane>
 
-            <!-- ════════════════════════════════════════════ -->
+            <!-- ═══════════════════════════════════════════ -->
             <!-- Tab 2: 模块管理 -->
-            <!-- ════════════════════════════════════════════ -->
+            <!-- ═══════════════════════════════════════════ -->
             <el-tab-pane label="模块管理" name="modules">
                 <div class="section-toolbar">
-                    <el-button type="primary" @click="loadModules" :loading="loading">
+                    <el-button type="primary" @click="loadModules" :loading="modulesLoading">
                         <el-icon><Refresh /></el-icon> 刷新
                     </el-button>
                 </div>
-                <el-table :data="modules" border stripe v-loading="loading" size="small" max-height="500">
+                <el-table :data="modules" border stripe v-loading="modulesLoading" size="small" max-height="500">
                     <el-table-column prop="Name" label="名称" width="160" />
                     <el-table-column prop="Key" label="Key" width="100" />
                     <el-table-column prop="Version" label="版本" width="80" />
@@ -123,16 +123,16 @@
                 </el-table>
             </el-tab-pane>
 
-            <!-- ════════════════════════════════════════════ -->
+            <!-- ═══════════════════════════════════════════ -->
             <!-- Tab 3: 插件管理 -->
-            <!-- ════════════════════════════════════════════ -->
+            <!-- ═══════════════════════════════════════════ -->
             <el-tab-pane label="插件管理" name="plugins">
                 <div class="section-toolbar">
-                    <el-button type="primary" @click="loadModules" :loading="loading">
+                    <el-button type="primary" @click="loadPlugins" :loading="pluginsLoading">
                         <el-icon><Refresh /></el-icon> 刷新
                     </el-button>
                 </div>
-                <el-table v-if="plugins.length > 0" :data="plugins" border stripe size="small" max-height="500">
+                <el-table :data="plugins" border stripe v-loading="pluginsLoading" size="small" max-height="500">
                     <el-table-column prop="Name" label="名称" width="160" />
                     <el-table-column prop="Key" label="Key" width="100" />
                     <el-table-column prop="Version" label="版本" width="80" />
@@ -151,12 +151,12 @@
                         </template>
                     </el-table-column>
                 </el-table>
-                <el-empty v-else description="暂无插件。在 Program.cs 中添加 services.AddMicroiPlugin() 可启用插件系统。" />
+                <el-empty v-if="plugins.length === 0 && !pluginsLoading" description="暂无插件。在 Program.cs 中添加 services.AddMicroiPlugin() 可启用插件系统。" />
             </el-tab-pane>
 
-            <!-- ════════════════════════════════════════════ -->
+            <!-- ═══════════════════════════════════════════ -->
             <!-- Tab 4: 配置管理 -->
-            <!-- ════════════════════════════════════════════ -->
+            <!-- ═══════════════════════════════════════════ -->
             <el-tab-pane label="配置管理" name="config">
                 <el-card shadow="never">
                     <template #header><span>业务底座配置</span></template>
@@ -182,7 +182,7 @@
                         <template #default>
                             <pre style="margin:8px 0 0;font-size:12px;background:#f5f7fa;padding:8px;border-radius:4px;">{
   "BusinessBypass": {
-    "BizAdminDefaultPwd": "Admin@123",
+    "BizAdminDefaultPwd": "********",
     "AutoMigrate": true,
     "MonitorIntervalSec": 60,
     "DebugMode": false
@@ -196,9 +196,9 @@
                 </el-card>
             </el-tab-pane>
 
-            <!-- ════════════════════════════════════════════ -->
+            <!-- ═══════════════════════════════════════════ -->
             <!-- Tab 5: SDK 与模板 -->
-            <!-- ════════════════════════════════════════════ -->
+            <!-- ═══════════════════════════════════════════ -->
             <el-tab-pane label="SDK 与模板" name="sdk">
                 <el-card shadow="never" style="margin-bottom:12px;">
                     <template #header><span>插件开发 SDK</span></template>
@@ -274,6 +274,11 @@ export default {
             modules: [],
             plugins: [],
             config: { ModuleCount: 0, PluginCount: 0, AvailableEndpoints: [] },
+            configEndpoints: [],
+            modulesLoaded: false,
+            pluginsLoaded: false,
+            modulesLoading: false,
+            pluginsLoading: false,
             quickEntries: [
                 { path: "/business/doc/list", label: "文档管理", icon: "Document", color: "#409eff" },
                 { path: "/business/schema", label: "表结构管理", icon: "Grid", color: "#67c23a" },
@@ -282,42 +287,74 @@ export default {
             ]
         };
     },
-    computed: {
-        configEndpoints() {
-            if (!this.config.AvailableEndpoints) return [];
-            return this.config.AvailableEndpoints.map(function (ep) {
-                var parts = ep.split("/");
-                var group = parts.length >= 2 ? parts[0] + "/" + parts[1] : ep;
-                var endpoints = parts.length >= 2 ? parts.slice(2).join("/") : "";
-                return { group: group, endpoints: endpoints };
-            });
+    watch: {
+        // 缓存 configEndpoints，仅在 AvailableEndpoints 变化时重新计算
+        "config.AvailableEndpoints": {
+            handler(val) {
+                if (!val || !val.length) { this.configEndpoints = []; return; }
+                var result = [];
+                for (var i = 0; i < val.length; i++) {
+                    var ep = val[i];
+                    var parts = ep.split("/");
+                    var group = parts.length >= 2 ? parts[0] + "/" + parts[1] : ep;
+                    var endpoints = parts.length >= 2 ? parts.slice(2).join("/") : "";
+                    result.push({ group: group, endpoints: endpoints });
+                }
+                this.configEndpoints = result;
+            },
+            immediate: true
         }
     },
     mounted() {
-        this.refreshAll();
+        this.loadDashboard();
     },
     methods: {
-        async refreshAll() {
+        onTabChange(tabName) {
+            if (tabName === "modules" && !this.modulesLoaded) {
+                this.loadModules();
+            }
+            if (tabName === "plugins" && !this.pluginsLoaded) {
+                this.loadPlugins();
+            }
+        },
+        async refreshCurrentTab() {
+            if (this.activeTab === "overview") {
+                await this.loadDashboard();
+            } else if (this.activeTab === "modules") {
+                await this.loadModules();
+            } else if (this.activeTab === "plugins") {
+                await this.loadPlugins();
+            } else if (this.activeTab === "config") {
+                await this.loadConfig();
+            }
+        },
+        async loadDashboard() {
             this.loading = true;
             try {
-                var [dashRes, configRes] = await Promise.all([
-                    BusinessBaseApi.getDashboard(),
-                    BusinessBaseApi.getConfig()
-                ]);
+                var dashRes = await BusinessBaseApi.getDashboard();
                 if (dashRes && dashRes.Code === 1) {
                     this.dashboard = dashRes.Data || {};
                 }
-                if (configRes && configRes.Code === 1) {
-                    this.config = configRes.Data || {};
-                }
-                await this.loadModules();
+                await this.loadConfig();
             } catch (e) {
-                console.error("刷新总控台失败:", e);
+                console.error("加载仪表盘失败:", e);
             } finally {
                 this.loading = false;
             }
         },
+        async loadConfig() {
+            try {
+                var configRes = await BusinessBaseApi.getConfig();
+                if (configRes && configRes.Code === 1) {
+                    this.config = configRes.Data || {};
+                }
+            } catch (e) {
+                console.error("加载配置失败:", e);
+            }
+        },
         async loadModules() {
+            this.modulesLoading = true;
+            this.modulesLoaded = true;
             try {
                 var res = await BusinessMonitorApi.getModules();
                 if (res && res.Code === 1) {
@@ -325,6 +362,22 @@ export default {
                 }
             } catch (e) {
                 console.error("加载模块列表失败:", e);
+            } finally {
+                this.modulesLoading = false;
+            }
+        },
+        async loadPlugins() {
+            this.pluginsLoading = true;
+            this.pluginsLoaded = true;
+            try {
+                var res = await BusinessMonitorApi.getPlugins();
+                if (res && res.Code === 1) {
+                    this.plugins = res.Data || [];
+                }
+            } catch (e) {
+                console.error("加载插件列表失败:", e);
+            } finally {
+                this.pluginsLoading = false;
             }
         },
         moduleStageTag(stage) {

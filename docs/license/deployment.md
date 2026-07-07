@@ -87,11 +87,13 @@ services:
   microi:
     image: microi/server:latest
     environment:
-      - MICROI_MACHINE_ID=your-fixed-machine-id-here
-      - MICROI_LICENSE_PUBLIC_KEY=your-public-key-base64
-      # License 服务器额外设置：
-      - MICROI_LICENSE_PRIVATE_KEY=your-private-key-base64
-    volumes:
+      |      - MICROI_MACHINE_ID=your-fixed-machine-id-here
+            - MICROI_LICENSE_PUBLIC_KEY=your-public-key-base64
+            # License 服务器额外设置：
+            - MICROI_LICENSE_PRIVATE_KEY=your-private-key-base64
+            # 🔴 必须设置：License 文件加密密钥（V-001 修复）
+            - MICROI_LICENSE_ENCRYPT_KEY=your-32-char-random-string
+          volumes:
       - ./data:/app/data
     ports:
       - "7266:7266"
