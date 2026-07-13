@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <RootNamespace>Microi.net.Business</RootNamespace>
+    <AssemblyName>Microi.Business.Model</AssemblyName>
+    <Description>Microi吾码 - 业务底座共享模型层（实体基类、生命周期枚举、业务参数基类）</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Microi.Server\Microi.Core\Microi.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 覆盖传递依赖中的已知漏洞版本 GHSA-37gx-xxp4-5rgx / GHSA-w3x6-4m5h-cxqf -->
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.9" />
+  </ItemGroup>
+
+</Project>

@@ -257,7 +257,43 @@ export const LicenseApi = {
 };
 
 // ═══════════════════════════════════════════════════════════════
-//  6. 业务底座总控台 — 对应 BusinessBaseController
+//  6. 插件管理 API — 对应 PluginAdminController
+// ═══════════════════════════════════════════════════════════════
+
+export const PluginApi = {
+  /** 获取全部插件列表与状态 */
+  list() {
+    return post('/api/BusinessBase/Plugin/List');
+  },
+
+  /** 停止指定插件 */
+  stop(key) {
+    return post('/api/BusinessBase/Plugin/Stop', { Key: key });
+  },
+
+  /** 重新启动指定插件 */
+  start(key) {
+    return post('/api/BusinessBase/Plugin/Start', { Key: key });
+  },
+
+  /** 卸载指定插件 */
+  unload(key) {
+    return post('/api/BusinessBase/Plugin/Unload', { Key: key });
+  },
+
+  /** 获取指定插件的日志 */
+  logs(key) {
+    return post('/api/BusinessBase/Plugin/Logs', { Key: key });
+  },
+
+  /** 清空指定插件的日志 */
+  clearLogs(key) {
+    return post('/api/BusinessBase/Plugin/ClearLogs', { Key: key });
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════
+//  7. 业务底座总控台 — 对应 BusinessBaseController
 // ═══════════════════════════════════════════════════════════════
 
 export const BusinessBaseApi = {
@@ -287,5 +323,6 @@ export default {
   BusinessSchemaApi,
   BusinessAuthApi,
   LicenseApi,
-  BusinessBaseApi
+  BusinessBaseApi,
+  PluginApi
 };

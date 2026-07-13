@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>Microi.Plugin.Demo.WorkOrder</AssemblyName>
+    <RootNamespace>Microi.Plugin.Demo.WorkOrder</RootNamespace>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Foundation\Core\Microi.Business.Core.csproj" />
+    <ProjectReference Include="..\..\..\Foundation\Common\Microi.Business.Common.csproj" />
+    <ProjectReference Include="..\..\..\Foundation\Model\Microi.Business.Model.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+</Project>

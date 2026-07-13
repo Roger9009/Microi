@@ -131,23 +131,61 @@
                     <el-button type="primary" @click="loadPlugins" :loading="pluginsLoading">
                         <el-icon><Refresh /></el-icon> 刷新
                     </el-button>
+                    <el-tag type="info" size="small" style="margin-left:8px;">{{ plugins.length }} 个插件</el-tag>
                 </div>
-                <el-table :data="plugins" border stripe v-loading="pluginsLoading" size="small" max-height="500">
-                    <el-table-column prop="Name" label="名称" width="160" />
-                    <el-table-column prop="Key" label="Key" width="100" />
-                    <el-table-column prop="Version" label="版本" width="80" />
-                    <el-table-column prop="Order" label="顺序" width="60" />
-                    <el-table-column label="状态" width="100">
+
+                <!-- 启停确认弹窗 -->
+                <el-dialog v-model="confirmDialog.visible" :title="confirmDialog.title" width="400px">
+                    <p style="margin-bottom:12px;">{{ confirmDialog.message }}</p>
+                    <el-alert v-if="confirmDialog.action === 'unload'" type="warning" :closable="false" show-icon>
+                        卸载后无法重新启动，需替换 DLL 后重启应用。请确认。
+                    </el-alert>
+                    <template #footer>
+                        <el-button @click="confirmDialog.visible = false">取消</el-button>
+                        <el-button type="primary" :type="confirmDialog.confirmType" @click="doConfirmAction" :loading="confirmDialog.loading">
+                            {{ confirmDialog.confirmText }}
+                        </el-button>
+                    </template>
+                </el-dialog>
+
+                <!-- 日志查看弹窗 -->
+                <el-dialog v-model="logDialog.visible" :title="'插件日志 — ' + logDialog.key" width="700px" top="5vh">
+                    <div style="max-height:450px;overflow-y:auto;background:#1e1e1e;border-radius:4px;padding:12px;">
+                        <pre v-if="logDialog.logs && logDialog.logs.length > 0"
+                            style="color:#d4d4d4;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-all;margin:0;">{{ logDialog.logs.join('\n') }}</pre>
+                        <div v-else style="color:#909399;text-align:center;padding:24px;">暂无日志</div>
+                    </div>
+                    <template #footer>
+                        <el-button @click="clearPluginLogs(logDialog.key)" :loading="logDialog.loading" size="small">
+                            清空日志
+                        </el-button>
+                        <el-button @click="logDialog.visible = false">关闭</el-button>
+                    </template>
+                </el-dialog>
+
+                <el-table :data="plugins" border stripe v-loading="pluginsLoading" size="small" max-height="450">
+                    <el-table-column prop="Name" label="名称" width="150" />
+                    <el-table-column prop="Key" label="Key" width="110" />
+                    <el-table-column prop="Version" label="版本" width="70" />
+                    <el-table-column label="状态" width="110">
                         <template #default="{ row }">
-                            <el-tag :type="row.Stage === 5 ? 'success' : row.Stage === 99 ? 'danger' : 'info'" size="small">
-                                {{ row.Stage === 5 ? '已启动' : row.Stage === 99 ? '异常' : '阶段:' + row.Stage }}
-                            </el-tag>
+                            <el-tag :type="pluginStatusTag(row)" size="small">{{ pluginStatusText(row) }}</el-tag>
                         </template>
                     </el-table-column>
-                    <el-table-column prop="Error" label="错误" min-width="200" show-overflow-tooltip />
-                    <el-table-column label="SDK 模板" width="140">
+                    <el-table-column prop="DllPath" label="DLL 路径" min-width="180" show-overflow-tooltip />
+                    <el-table-column prop="StageChangedTime" label="状态变更" width="150" />
+                    <el-table-column label="操作" width="280" fixed="right">
                         <template #default="{ row }">
-                            <el-tag v-if="row.Key === 'audit-log' || row.Key === 'data-sync'" type="success" size="small">内置</el-tag>
+                            <el-button-group>
+                                <el-button v-if="row.IsRunning" type="warning" size="small"
+                                    @click="confirmStopPlugin(row)">停止</el-button>
+                                <el-button v-if="row.IsStopped" type="success" size="small"
+                                    @click="confirmStartPlugin(row)">启动</el-button>
+                                <el-button v-if="row.IsStopped" type="danger" size="small"
+                                    @click="confirmUnloadPlugin(row)">卸载</el-button>
+                                <el-button type="primary" size="small"
+                                    @click="showPluginLogs(row.Key)">日志</el-button>
+                            </el-button-group>
                         </template>
                     </el-table-column>
                 </el-table>
@@ -261,7 +299,8 @@ app.UseMicroiPlugin();</pre>
 
 <script>
 import { Refresh, Monitor, Setting, Document, Grid } from "@element-plus/icons-vue";
-import { BusinessBaseApi, BusinessMonitorApi } from "@/utils/business-base";
+import { ElMessage } from "element-plus";
+import { BusinessBaseApi, BusinessMonitorApi, PluginApi } from "@/utils/business-base";
 
 export default {
     name: "business_base_console",
@@ -284,7 +323,11 @@ export default {
                 { path: "/business/schema", label: "表结构管理", icon: "Grid", color: "#67c23a" },
                 { path: "/business/monitor", label: "模块监控", icon: "Monitor", color: "#e6a23c" },
                 { path: "/license-admin", label: "License 总控台", icon: "Setting", color: "#f56c6c" }
-            ]
+            ],
+            // 插件启停确认弹窗
+            confirmDialog: { visible: false, title: "", message: "", action: "", key: "", confirmType: "primary", confirmText: "确认", loading: false },
+            // 日志查看弹窗
+            logDialog: { visible: false, key: "", logs: [], loading: false }
         };
     },
     watch: {
@@ -370,15 +413,102 @@ export default {
             this.pluginsLoading = true;
             this.pluginsLoaded = true;
             try {
-                var res = await BusinessMonitorApi.getPlugins();
+                var res = await PluginApi.list();
                 if (res && res.Code === 1) {
-                    this.plugins = res.Data || [];
+                    this.plugins = (res.Data && res.Data.Plugins) ? res.Data.Plugins : [];
                 }
             } catch (e) {
                 console.error("加载插件列表失败:", e);
             } finally {
                 this.pluginsLoading = false;
             }
+        },
+        // ── 插件启停按钮 ──
+        confirmStopPlugin(row) {
+            this.confirmDialog = {
+                visible: true, title: "停止插件", action: "stop", key: row.Key,
+                message: `确认停止插件「${row.Name}」(${row.Key}) ？停止后该插件服务将不可用。`,
+                confirmType: "warning", confirmText: "确认停止", loading: false
+            };
+        },
+        confirmStartPlugin(row) {
+            this.confirmDialog = {
+                visible: true, title: "启动插件", action: "start", key: row.Key,
+                message: `确认重新启动插件「${row.Name}」(${row.Key}) ？将从 Stopped 状态恢复运行。`,
+                confirmType: "success", confirmText: "确认启动", loading: false
+            };
+        },
+        confirmUnloadPlugin(row) {
+            this.confirmDialog = {
+                visible: true, title: "卸载插件", action: "unload", key: row.Key,
+                message: `确认卸载插件「${row.Name}」(${row.Key}) ？卸载后可替换 DLL。`,
+                confirmType: "danger", confirmText: "确认卸载", loading: false
+            };
+        },
+        async doConfirmAction() {
+            this.confirmDialog.loading = true;
+            try {
+                var action = this.confirmDialog.action;
+                var key = this.confirmDialog.key;
+                var res;
+                if (action === "stop") res = await PluginApi.stop(key);
+                else if (action === "start") res = await PluginApi.start(key);
+                else if (action === "unload") res = await PluginApi.unload(key);
+
+                if (res && res.Code === 1) {
+                    ElMessage.success(res.Msg || "操作成功");
+                } else {
+                    ElMessage.error(res ? res.Msg : "操作失败");
+                }
+                this.confirmDialog.visible = false;
+                await this.loadPlugins();
+            } catch (e) {
+                console.error("插件操作失败:", e);
+                ElMessage.error("插件操作失败: " + (e.message || e));
+            } finally {
+                this.confirmDialog.loading = false;
+            }
+        },
+        // ── 日志查看 ──
+        async showPluginLogs(key) {
+            this.logDialog = { visible: true, key: key, logs: [], loading: true };
+            try {
+                var res = await PluginApi.logs(key);
+                if (res && res.Code === 1) {
+                    this.logDialog.logs = res.Data && res.Data.Logs ? res.Data.Logs : [];
+                }
+            } catch (e) {
+                console.error("加载插件日志失败:", e);
+            } finally {
+                this.logDialog.loading = false;
+            }
+        },
+        async clearPluginLogs(key) {
+            this.logDialog.loading = true;
+            try {
+                var res = await PluginApi.clearLogs(key);
+                if (res && res.Code === 1) {
+                    this.logDialog.logs = [];
+                    ElMessage.success("日志已清空");
+                }
+            } catch (e) {
+                console.error("清空日志失败:", e);
+            } finally {
+                this.logDialog.loading = false;
+            }
+        },
+        // ── 插件状态辅助 ──
+        pluginStatusTag(row) {
+            if (row.IsRunning) return "success";
+            if (row.IsFaulted) return "danger";
+            if (row.IsStopped) return "info";
+            return "warning";
+        },
+        pluginStatusText(row) {
+            if (row.IsRunning) return "运行中";
+            if (row.IsFaulted) return "故障";
+            if (row.IsStopped) return "已停止";
+            return row.Stage || "未知";
         },
         moduleStageTag(stage) {
             var map = { Started: "success", Starting: "warning", Registered: "primary", Faulted: "danger", Stopped: "info" };

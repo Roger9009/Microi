@@ -6,7 +6,7 @@ using System.Diagnostics;
 using Dos.Common;
 using Microi.net;
 using Microi.net.Api;
-using Microi.net.Business;
+// using Microi.net.Business; // TODO: 待 Microi.net NuGet 包包含 Business 命名空间后取消注释
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -97,6 +97,7 @@ Console.WriteLine($"Microi：【✅成功】【{DateTime.Now:yyyy-MM-dd HH:mm:ss
 Stopwatch timer = new Stopwatch();
 timer.Start();
 var dbConn = Environment.GetEnvironmentVariable("OsClientDbConn", EnvironmentVariableTarget.Process) ?? ConfigHelper.GetAppSettings("OsClientDbConn") ?? "";
+var dbType = ConfigHelper.GetAppSettings("OsClientDbType") ?? "SqlServer";
 var microiNetDllVersion = "";
 try
 {
@@ -128,8 +129,8 @@ services.AddMicroiAI();//【可选】注入【AI引擎】插件
 services.AddMicroiMQTT();//【可选】注入【MQTT引擎】插件
 services.AddMicroiHDFS();//【可选】注入【分布式存储】插件
 services.AddMicroiCaptcha();//【可选】注入验证码插件
-services.AddMicroiJob(dbConn);//【可选】注入【任务调度引擎】插件
-services.AddMicroiBusiness();//【可选】注入【业务底座】（ERP/MES 等业务模块，自动扫描装配）
+services.AddMicroiJob(dbConn, dbType);//【可选】注入【任务调度引擎】插件
+// services.AddMicroiBusiness();//【可选】注入【业务底座】（ERP/MES 等业务模块，自动扫描装配）—— TODO: 待 NuGet 包支持后取消注释
 services.TryAddSingleton(typeof(DiyFilter<>));
 services.AddSingleton<DynamicRoute>();
 // 注册配置器
@@ -271,7 +272,7 @@ app.MapControllerRoute(
 MicroiEngine.Init(app.Services);
 app.UseMicroi();      // 初始化 SaaS 引擎（同步加载 sys_osclients → ClientList）
 app.UseMicroiJob();   // 启用任务计划
-app.UseMicroiBusiness(); // 启用业务底座（驱动各业务模块生命周期）
+// app.UseMicroiBusiness(); // 启用业务底座（驱动各业务模块生命周期）—— TODO: 待 NuGet 包支持后取消注释
 app.UseMicroiMQ();    // 启用消息队列
 app.UseMicroiUpgrade();// 启用平台自动升级
 app.MapHub<DiyWebSocket>("/diy-websocket").RequireCors("any");
