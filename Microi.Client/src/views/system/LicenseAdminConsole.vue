@@ -68,6 +68,10 @@
                 <el-form-item>
                     <el-button type="primary" @click="loadList"><el-icon><Search /></el-icon> 查询</el-button>
                     <el-button type="success" @click="showIssueDialog = true"><el-icon><Plus /></el-icon> 直接签发</el-button>
+                    <el-upload accept=".milic" :auto-upload="false" :show-file-list="false"
+                        :on-change="importRegistrationFile" style="display:inline-block;margin-left:12px;">
+                        <el-button type="warning" :loading="importingRegistration">导入注册文件</el-button>
+                    </el-upload>
                 </el-form-item>
             </el-form>
         </el-card>
@@ -127,8 +131,8 @@
 
             <!-- 分页 -->
             <div v-if="total > 0" style="display:flex;justify-content:flex-end;padding:12px 0;">
-                <el-pagination v-model:current-page="page" :page-size="pageSize" :total="total"
-                    layout="total, prev, pager, next, jumper" @current-change="loadList" />
+                <el-pagination :current-page="page" :page-size="pageSize" :total="total"
+                    layout="total, prev, pager, next, jumper" @current-change="onPageChange" />
             </div>
         </el-card>
 
@@ -251,13 +255,52 @@ export default {
             showLogsDialog: false,
             logHidFilter: "",
             logList: [],
-            logsLoading: false
+            logsLoading: false,
+            importingRegistration: false
         };
     },
     mounted() {
         this.refreshAll();
     },
     methods: {
+        centralFetch(path, options) {
+            const request = options || {};
+            const headers = Object.assign({}, request.headers || {});
+            const token = this.DiyCommon && this.DiyCommon.getToken ? this.DiyCommon.getToken() : "";
+            if (token) headers.authorization = "Bearer " + token;
+            request.headers = headers;
+            return fetch(path.startsWith("http") ? path : LS_BASE + path, request)
+                .then(function (response) { return response.json(); });
+        },
+        importRegistrationFile(file) {
+            const self = this;
+            if (!file || !file.raw) return;
+            self.importingRegistration = true;
+            const reader = new FileReader();
+            reader.onload = function (event) {
+                self.centralFetch("/api/License/ImportRegistrationFile", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ FileContent: event.target.result })
+                }).then(async function (result) {
+                    if (result && (result.Code === 1 || result.Code === 2)) {
+                        ElMessage.success(result.Msg || "注册文件已导入");
+                        await self.refreshAll();
+                    } else {
+                        ElMessage.error((result && result.Msg) || "注册文件导入失败");
+                    }
+                }).catch(function (error) {
+                    ElMessage.error("注册文件导入异常: " + (error.message || ""));
+                }).finally(function () {
+                    self.importingRegistration = false;
+                });
+            };
+            reader.onerror = function () {
+                self.importingRegistration = false;
+                ElMessage.error("读取注册文件失败");
+            };
+            reader.readAsText(file.raw);
+        },
         async refreshAll() {
             this.loading = true;
             try {
@@ -269,11 +312,15 @@ export default {
                 this.loading = false;
             }
         },
+        onPageChange(newPage) {
+            this.page = newPage;
+            this.loadList();
+        },
         async loadList() {
             try {
                 var url = LS_BASE + "/api/License/List?page=" + this.page + "&pageSize=" + this.pageSize;
                 if (this.query.Status) url += "&status=" + this.query.Status;
-                var res = await fetch(url, { method: "GET" }).then(function (r) { return r.json(); });
+                var res = await this.centralFetch(url, { method: "GET" });
                 if (res && res.Code === 1 && res.Data) {
                     var all = res.Data.List || [];
                     // 客户端公司名过滤
@@ -297,7 +344,7 @@ export default {
         },
         async loadStats() {
             try {
-                var res = await fetch(LS_BASE + "/api/License/List?pageSize=10000", { method: "GET" }).then(function (r) { return r.json(); });
+                var res = await this.centralFetch("/api/License/List?pageSize=10000", { method: "GET" });
                 if (res && res.Code === 1 && res.Data) {
                     var list = res.Data.List || [];
                     this.stats.total = list.length;
@@ -346,10 +393,10 @@ export default {
         async onApprove(row) {
             this.acting = row.HID;
             try {
-                var res = await fetch(LS_BASE + "/api/License/Approve", {
+                var res = await this.centralFetch("/api/License/Approve", {
                     method: "POST", headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ HID: row.HID })
-                }).then(function (r) { return r.json(); });
+                });
                 if (res && res.Code === 1) {
                     ElMessage.success("签发成功");
                     await this.refreshAll();
@@ -374,10 +421,10 @@ export default {
             }
             this.rejecting = true;
             try {
-                var res = await fetch(LS_BASE + "/api/License/Reject", {
+                var res = await this.centralFetch("/api/License/Reject", {
                     method: "POST", headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ HID: this.rejectTarget.HID, RejectReason: this.rejectReason })
-                }).then(function (r) { return r.json(); });
+                });
                 if (res && res.Code === 1) {
                     ElMessage.success("已驳回");
                     this.showRejectDialog = false;
@@ -399,10 +446,10 @@ export default {
                     { confirmButtonText: "确认", cancelButtonText: "取消", type: "warning" }
                 );
                 this.acting = row.HID;
-                var res = await fetch(LS_BASE + "/api/License/Revoke", {
+                var res = await this.centralFetch("/api/License/Revoke", {
                     method: "POST", headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ HID: row.HID, Revoke: revoke })
-                }).then(function (r) { return r.json(); });
+                });
                 if (res && res.Code === 1) {
                     ElMessage.success(revoke ? "已作废" : "已恢复");
                     await this.refreshAll();
@@ -434,10 +481,10 @@ export default {
                 if (this.issueForm.ExpirationDate) {
                     payload.ExpirationDate = this.issueForm.ExpirationDate + "T00:00:00Z";
                 }
-                var res = await fetch(LS_BASE + "/api/License/Issue", {
+                var res = await this.centralFetch("/api/License/Issue", {
                     method: "POST", headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(payload)
-                }).then(function (r) { return r.json(); });
+                });
                 if (res && res.Code === 1) {
                     ElMessage.success("签发成功");
                     this.showIssueDialog = false;
@@ -457,8 +504,7 @@ export default {
             this.logsLoading = true;
             this.showLogsDialog = true;
             try {
-                var res = await fetch(LS_BASE + "/api/License/Logs?hid=" + encodeURIComponent(hid), { method: "GET" })
-                    .then(function (r) { return r.json(); });
+                var res = await this.centralFetch("/api/License/Logs?hid=" + encodeURIComponent(hid), { method: "GET" });
                 if (res && res.Code === 1 && res.Data) {
                     this.logList = res.Data.List || [];
                 } else {

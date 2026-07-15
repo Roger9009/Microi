@@ -18,80 +18,37 @@ namespace Microi.net
         public async Task<List<string>> Run(string OsClient)
         {
             var msgs = new List<string>();
-
-            // 更新 sys_role 表 Level=999 -> 9999
-            var result1 = await MicroiEngine.FormEngine.UptFormDataByWhereAsync("sys_role", new
+            try
             {
-                OsClient = OsClient,
-                Level = 9999,
-                _Where = new List<List<string>>() {
-                    new List<string> { "Level", "=", "999" }
-                }
-            });
-            if (result1.Code != 1)
+                // 该升级必须能在仅有物理表、尚未导入完整 diy_field 元数据的空库执行。
+                // 固定条件和值不涉及外部输入，直接通过底座 DbSession 更新，避免 FormEngine
+                // 因 PwdEncode 字段元数据尚不存在而拒绝生成 Where。
+                var db = Microi.net.OsClient.GetClient(OsClient).Db;
+                db.FromSql("UPDATE sys_role SET Level = 9999 WHERE Level = 999").ExecuteNonQuery();
+                db.FromSql("UPDATE sys_role SET Level = 9998 WHERE Level = 998").ExecuteNonQuery();
+                db.FromSql("UPDATE sys_user SET Level = 9999 WHERE Level = 999").ExecuteNonQuery();
+                db.FromSql("UPDATE sys_user SET Level = 9998 WHERE Level = 998").ExecuteNonQuery();
+                db.FromSql("UPDATE sys_config SET PwdEncode = 'DES' WHERE PwdEncode = 'V8' OR PwdEncode = '' OR PwdEncode IS NULL")
+                    .ExecuteNonQuery();
+            }
+            catch (Exception ex)
             {
-                msgs.Add($"sys_role Level 999->9999 失败: {result1.Msg}");
+                msgs.Add($"升级 Level/PwdEncode 失败: {ex.Message}");
             }
 
-            // 更新 sys_role 表 Level=998 -> 9998
-            var result2 = await MicroiEngine.FormEngine.UptFormDataByWhereAsync("sys_role", new
-            {
-                OsClient = OsClient,
-                Level = 9998,
-                _Where = new List<List<string>>() {
-                    new List<string> { "Level", "=", "998" }
-                }
-            });
-            if (result2.Code != 1)
-            {
-                msgs.Add($"sys_role Level 998->9998 失败: {result2.Msg}");
-            }
-
-            // 更新 sys_user 表 Level=999 -> 9999
-            var result3 = await MicroiEngine.FormEngine.UptFormDataByWhereAsync("sys_user", new
-            {
-                OsClient = OsClient,
-                Level = 9999,
-                _Where = new List<List<string>>() {
-                    new List<string> { "Level", "=", "999" }
-                }
-            });
-            if (result3.Code != 1)
-            {
-                msgs.Add($"sys_user Level 999->9999 失败: {result3.Msg}");
-            }
-
-            // 更新 sys_user 表 Level=998 -> 9998
-            var result4 = await MicroiEngine.FormEngine.UptFormDataByWhereAsync("sys_user", new
-            {
-                OsClient = OsClient,
-                Level = 9998,
-                _Where = new List<List<string>>() {
-                    new List<string> { "Level", "=", "998" }
-                }
-            });
-            if (result4.Code != 1)
-            {
-                msgs.Add($"sys_user Level 998->9998 失败: {result4.Msg}");
-            }
-
-            // 更新 sys_user 表 Level=998 -> 9998
-            var result5 = await MicroiEngine.FormEngine.UptFormDataByWhereAsync("sys_config", new
-            {
-                OsClient = OsClient,
-                PwdEncode = "DES",
-                _Where = new List<List<string>>() {
-                    new List<string> { "PwdEncode", "=", "V8" },
-                    new List<string> { "OR", "PwdEncode", "=", "" },
-                    new List<string> { "OR", "PwdEncode", "=", null },
-                }
-            });
-            if (result5.Code != 1)
-            {
-                msgs.Add($"sys_config PwdEncode V8->DES 失败: {result5.Msg}");
-            }
-
+            await Task.CompletedTask;
             return msgs;
+        }
+
+        private static bool IsSkipableEmptyDb(string msg)
+        {
+            if (string.IsNullOrWhiteSpace(msg)) return false;
+            // 空库无业务数据 / 受影响行数为 0：属正常跳过
+            return msg.IndexOf("NoExistData", StringComparison.OrdinalIgnoreCase) >= 0
+                || msg.IndexOf("不存在的数据", StringComparison.OrdinalIgnoreCase) >= 0
+                || msg.IndexOf("Line0", StringComparison.OrdinalIgnoreCase) >= 0
+                || msg.IndexOf("受影响行数为0", StringComparison.OrdinalIgnoreCase) >= 0
+                || msg.IndexOf("列名", StringComparison.OrdinalIgnoreCase) >= 0 && msg.IndexOf("无效", StringComparison.OrdinalIgnoreCase) >= 0;
         }
     }
 }

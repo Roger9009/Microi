@@ -1,5 +1,6 @@
 using Dos.Common;
 using Dos.ORM;
+using Microi.net;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
@@ -40,8 +41,7 @@ namespace Microi.License
 
         private const int GracePeriodDays = 7;
         private const string GraceFileName = ".lic_grace";
-        private const string GraceDbKey = "__LICENSE_GRACE_START__";
-        private const string ValidProofDbKey = "__LICENSE_VALID_PROOF__";
+        private const string ValidProofFileName = ".lic_proof";
         private const string GraceHmacKey = "microi-grace-hmac-2026-v2";
 
         public const int HeartbeatIntervalHours = 12;
@@ -102,33 +102,20 @@ namespace Microi.License
         {
             var now = DateTime.UtcNow;
             var gracePath = Path.Combine(AppContext.BaseDirectory, GraceFileName);
-            var db = GetDb();
-
-            if (db != null)
-            {
-                var proofExpiry = ReadValidProof();
-                if (proofExpiry == null)
-                {
-                    if (!File.Exists(gracePath))
-                    {
-                        try { File.WriteAllText(gracePath, SignGraceContent(now.ToString("O") + "|bootstrap"), Encoding.UTF8); } catch { }
-                        Console.WriteLine($"Microi：【🆕License引导】首次部署，自动授予 {GracePeriodDays} 天初始宽限期。请尽快生成密钥对并自签发 License！");
-                        return (true, GracePeriodDays);
-                    }
-                    return (false, 0);
-                }
-                if ((now - proofExpiry.Value).TotalDays > GracePeriodDays) return (false, 0);
-            }
-            else
+            var proofExpiry = ReadValidProof();
+            if (proofExpiry == null)
             {
                 if (!File.Exists(gracePath))
                 {
-                    try { File.WriteAllText(gracePath, SignGraceContent(now.ToString("O") + "|init"), Encoding.UTF8); } catch { }
+                    try { File.WriteAllText(gracePath, SignGraceContent(now.ToString("O") + "|bootstrap"), Encoding.UTF8); } catch { }
+                    Console.WriteLine($"Microi：【🆕License引导】首次部署，自动授予 {GracePeriodDays} 天初始宽限期。请尽快生成密钥对并自签发 License！");
                     return (true, GracePeriodDays);
                 }
+                return (false, 0);
             }
+            if ((now - proofExpiry.Value).TotalDays > GracePeriodDays) return (false, 0);
 
-            DateTime? fileDate = null, dbDate = null;
+            DateTime? fileDate = null;
             try
             {
                 if (File.Exists(gracePath))
@@ -143,33 +130,15 @@ namespace Microi.License
                 }
             }
             catch { }
-            try
-            {
-                if (db != null)
-                {
-                    var row = db.FromSql("SELECT LicenseContent FROM diy_license WHERE HID=@p0 LIMIT 1")
-                        .AddInParameter("@p0", GraceDbKey).First<dynamic>();
-                    if (row != null)
-                    {
-                        var rawVal = ((JObject)JObject.FromObject(row))["LicenseContent"]?.ToString();
-                        var val = AesDecrypt(rawVal, DeriveDbKey());
-                        if (DateTime.TryParse(val, out var dd)) dbDate = dd.ToUniversalTime();
-                    }
-                }
-            }
-            catch { }
-
             DateTime firstSeen;
-            if (fileDate == null && dbDate == null)
+            if (fileDate == null)
             {
                 firstSeen = now;
                 try { File.WriteAllText(gracePath, SignGraceContent(now.ToString("O") + "|init"), Encoding.UTF8); } catch { }
             }
             else
             {
-                if (fileDate.HasValue && dbDate.HasValue)
-                    firstSeen = fileDate.Value < dbDate.Value ? fileDate.Value : dbDate.Value;
-                else firstSeen = fileDate ?? dbDate ?? now;
+                firstSeen = fileDate ?? now;
                 if (!File.Exists(gracePath))
                     try { File.WriteAllText(gracePath, SignGraceContent(firstSeen.ToString("O") + "|restored"), Encoding.UTF8); } catch { }
             }
@@ -180,35 +149,8 @@ namespace Microi.License
 
         public static void PersistGracePeriodToDb()
         {
-            try
-            {
-                var gracePath = Path.Combine(AppContext.BaseDirectory, GraceFileName);
-                if (!File.Exists(gracePath)) return;
-                var db = GetDb(); if (db == null) return;
-                var existing = db.FromSql("SELECT Id FROM diy_license WHERE HID=@p0")
-                    .AddInParameter("@p0", GraceDbKey).First<dynamic>();
-                if (existing != null) return;
-
-                var graceStart = DateTime.UtcNow.ToString("O");
-                if (File.Exists(gracePath))
-                {
-                    var fileContent = File.ReadAllText(gracePath, Encoding.UTF8).Trim();
-                    var verified = VerifyAndExtractGraceContent(fileContent);
-                    if (verified != null)
-                    {
-                        var parts = verified.Split('|');
-                        if (parts.Length >= 1) graceStart = parts[0];
-                    }
-                }
-                var val = AesEncrypt(graceStart, DeriveDbKey());
-                db.FromSql(@"INSERT INTO diy_license (Id, HID, Status, LicenseContent, CreateTime)
-                    VALUES (@p0, @p1, @p2, @p3, @p4)")
-                    .AddInParameter("@p0", Guid.NewGuid().ToString("N").ToUpperInvariant())
-                    .AddInParameter("@p1", GraceDbKey).AddInParameter("@p2", "Grace")
-                    .AddInParameter("@p3", val).AddInParameter("@p4", DateTime.Now).ExecuteNonQuery();
-                Console.WriteLine($"Microi：【License】宽限期起始时间已同步至数据库（{graceStart}）");
-            }
-            catch (Exception ex) { Console.WriteLine($"Microi：【License】宽限期DB同步失败（不影响运行）：{ex.Message}"); }
+            // 兼容旧调用：License 运行状态仅持久化到本机加密文件，
+            // 不再向 Microi 框架数据库写入授权数据。
         }
 
         // ======================== 历史有效证明 ========================
@@ -217,23 +159,11 @@ namespace Microi.License
         {
             try
             {
-                var db = GetDb(); if (db == null) return;
                 var hid = GetHardwareId();
                 var expStr = expirationDate.ToUniversalTime().ToString("O");
                 var hmac = ComputeProofHmac(hid, expStr);
                 var proofValue = AesEncrypt($"{expStr}|{hmac}", DeriveDbKey());
-                var existing = db.FromSql("SELECT Id FROM diy_license WHERE HID=@p0")
-                    .AddInParameter("@p0", ValidProofDbKey).First<dynamic>();
-                if (existing != null)
-                    db.FromSql("UPDATE diy_license SET LicenseContent=@p1, UpdateTime=@p2 WHERE HID=@p0")
-                        .AddInParameter("@p0", ValidProofDbKey).AddInParameter("@p1", proofValue)
-                        .AddInParameter("@p2", DateTime.Now).ExecuteNonQuery();
-                else
-                    db.FromSql(@"INSERT INTO diy_license (Id, HID, Status, LicenseContent, CreateTime)
-                        VALUES (@p0, @p1, @p2, @p3, @p4)")
-                        .AddInParameter("@p0", Guid.NewGuid().ToString("N").ToUpperInvariant())
-                        .AddInParameter("@p1", ValidProofDbKey).AddInParameter("@p2", "ValidProof")
-                        .AddInParameter("@p3", proofValue).AddInParameter("@p4", DateTime.Now).ExecuteNonQuery();
+                File.WriteAllText(Path.Combine(AppContext.BaseDirectory, ValidProofFileName), proofValue, Encoding.UTF8);
             }
             catch (Exception ex) { Console.WriteLine($"Microi：【License】有效证明写入失败（不影响运行）：{ex.Message}"); }
         }
@@ -378,6 +308,11 @@ namespace Microi.License
                         string status = null;
                         if (respObj != null && respObj.TryGetValue("Status", out var statusObj))
                             status = statusObj?.ToString();
+                        else if (respObj != null && respObj.TryGetValue("Data", out var dataObj) && dataObj != null)
+                        {
+                            var data = JObject.FromObject(dataObj);
+                            status = data["Status"]?.ToString();
+                        }
                         var hbPlain = $"{DateTime.UtcNow:O}|{status}";
                         File.WriteAllText(hp, AesEncrypt(hbPlain, DeriveFileKey(hid)), Encoding.UTF8);
                         if (status == "Revoked") { _revokedByServer = true; return "revoked"; }
@@ -426,25 +361,71 @@ namespace Microi.License
                 var pkg = JsonConvert.SerializeObject(new { Version = "1.0", HID = hid,
                     Company = company ?? "", Name = name ?? "", Phone = phone ?? "", IP = ip ?? "",
                     ProductType = pt, Remark = remark ?? "", RequestTime = rt, RequestHash = rh }, Formatting.Indented);
-                return new DosResult(1, new { HID = hid, EncryptedContent = AesEncrypt(pkg, DeriveFileKey(hid)),
-                    FileName = "microi-registration.milic", ContactEmail = ContactEmail }, "注册文件生成成功");
+                var encryptedContent = AesEncrypt(pkg, DeriveFileKey(hid));
+                // v2 注册文件使用可路由信封：总控台无需预先知道客户 HID，
+                // 即可从上传文件中读取 HID，再使用 HID 派生密钥解密正文。
+                var fileContent = JsonConvert.SerializeObject(new
+                {
+                    Version = "2.0",
+                    HID = hid,
+                    EncryptedContent = encryptedContent
+                }, Formatting.Indented);
+                return new DosResult(1, new
+                {
+                    HID = hid,
+                    EncryptedContent = encryptedContent,
+                    FileContent = fileContent,
+                    FileName = "microi-registration.milic",
+                    ContactEmail = ContactEmail
+                }, "注册文件生成成功");
             }
             catch (Exception ex) { return new DosResult(0, null, "生成注册文件失败：" + ex.Message); }
         }
 
-        public static Task<DosResult> ImportRegistrationFile(string fileContent)
+        public static Task<DosResult> ImportRegistrationFile(string fileContent) =>
+            ImportRegistrationFile(null, fileContent);
+
+        public static Task<DosResult> ImportRegistrationFile(string hid, string fileContent)
         {
             if (string.IsNullOrWhiteSpace(fileContent)) return Task.FromResult(new DosResult(0, null, "注册文件内容不能为空"));
             try
             {
-                JObject pkg; var hid = GetHardwareId();
-                try { pkg = JObject.Parse(fileContent); }
-                catch { return Task.FromResult(new DosResult(0, null, "注册文件格式无效")); }
-                if (pkg["Version"]?.ToString() != "1.0")
+                JObject pkg = null;
+                string encryptedContent = fileContent;
+                try
                 {
-                    var dec = AesDecrypt(fileContent, DeriveFileKey(hid));
-                    if (dec != null) { try { pkg = JObject.Parse(dec); } catch { return Task.FromResult(new DosResult(0, null, "注册文件解密后格式无效")); } }
+                    var envelope = JObject.Parse(fileContent);
+                    if (envelope["Version"]?.ToString() == "2.0")
+                    {
+                        hid = envelope["HID"]?.ToString();
+                        encryptedContent = envelope["EncryptedContent"]?.ToString();
+                    }
+                    else if (envelope["Version"]?.ToString() == "1.0")
+                    {
+                        pkg = envelope;
+                        hid = envelope["HID"]?.ToString() ?? hid;
+                    }
                 }
+                catch { /* v1 兼容：正文可能是纯加密字符串 */ }
+
+                if (string.IsNullOrWhiteSpace(hid))
+                    hid = GetHardwareId();
+                hid = hid.Trim().ToUpperInvariant();
+
+                if (pkg == null)
+                {
+                    var dec = AesDecrypt(encryptedContent, DeriveFileKey(hid));
+                    if (string.IsNullOrWhiteSpace(dec))
+                        return Task.FromResult(new DosResult(0, null, "注册文件解密失败，HID 与文件不匹配"));
+                    try { pkg = JObject.Parse(dec); }
+                    catch { return Task.FromResult(new DosResult(0, null, "注册文件解密后格式无效")); }
+                }
+
+                var packageHid = pkg["HID"]?.ToString();
+                if (!string.IsNullOrWhiteSpace(packageHid)
+                    && !string.Equals(packageHid.Trim(), hid, StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new DosResult(0, null, "注册文件 HID 不一致"));
+
                 var company = pkg["Company"]?.ToString() ?? "";
                 var name = pkg["Name"]?.ToString() ?? "";
                 var phone = pkg["Phone"]?.ToString() ?? "";
@@ -457,7 +438,7 @@ namespace Microi.License
                 if (!string.Equals(rh, HardwareHelper.Sha256Hex(canonical), StringComparison.OrdinalIgnoreCase))
                     return Task.FromResult(new DosResult(0, null, "注册文件完整性验证失败"));
 
-                var db = GetDb(); if (db == null) return Task.FromResult(new DosResult(0, null, "数据库未就绪"));
+                var db = GetLicenseDb(); if (db == null) return Task.FromResult(new DosResult(0, null, "授权中心独立数据库未配置或不可用"));
                 var existing = db.FromSql("SELECT * FROM diy_license WHERE HID=@p0").AddInParameter("@p0", hid).First<dynamic>();
                 if (existing != null)
                 {
@@ -470,6 +451,7 @@ namespace Microi.License
                         .AddInParameter("@p3", phone).AddInParameter("@p4", ip).AddInParameter("@p5", pt)
                         .AddInParameter("@p6", LicenseStatus.Pending).AddInParameter("@p7", remark)
                         .AddInParameter("@p8", DateTime.Now).ExecuteNonQuery();
+                    WriteLicenseLog(hid, LogAction.Import, detail: $"总控台导入注册文件（更新） | {company}");
                     return Task.FromResult(new DosResult(1, new { HID = hid, Status = LicenseStatus.Pending }, "注册文件已导入（更新）"));
                 }
                 db.FromSql(@"INSERT INTO diy_license (Id,HID,Company,Name,Phone,IP,ProductType,Status,Remark,CreateTime)
@@ -478,6 +460,7 @@ namespace Microi.License
                     .AddInParameter("@p2", company).AddInParameter("@p3", name).AddInParameter("@p4", phone)
                     .AddInParameter("@p5", ip).AddInParameter("@p6", pt).AddInParameter("@p7", LicenseStatus.Pending)
                     .AddInParameter("@p8", remark).AddInParameter("@p9", DateTime.Now).ExecuteNonQuery();
+                WriteLicenseLog(hid, LogAction.Import, detail: $"总控台导入注册文件（新增） | {company}");
                 return Task.FromResult(new DosResult(1, new { HID = hid, Status = LicenseStatus.Pending }, "注册文件已导入（新增）"));
             }
             catch (Exception ex) { return Task.FromResult(new DosResult(0, null, "导入失败：" + ex.Message)); }
@@ -584,13 +567,16 @@ namespace Microi.License
             hid = hid.Trim().ToUpperInvariant();
             try
             {
-                var db = GetDb(); if (db == null) return Task.FromResult(new DosResult(0, null, "数据库未就绪"));
+                var db = GetLicenseDb(); if (db == null) return Task.FromResult(new DosResult(0, null, "授权中心独立数据库未配置或不可用"));
                 var row = db.FromSql("SELECT * FROM diy_license WHERE HID=@p0").AddInParameter("@p0", hid).First<dynamic>();
                 if (row == null) return Task.FromResult(new DosResult(2, null, "未找到该HID的申请记录"));
                 var obj = JObject.FromObject(row);
                 string lc = null;
                 if (obj["Status"]?.ToString() == LicenseStatus.Issued) lc = obj["LicenseContent"]?.ToString();
-                return Task.FromResult(new DosResult(1, new { HID = hid, Status = obj["Status"]?.ToString(),
+                var status = obj["Status"]?.ToString();
+                return Task.FromResult(new DosResult(1, new { HID = hid, Status = status,
+                    HasLicense = status == LicenseStatus.Issued && !string.IsNullOrWhiteSpace(lc),
+                    Revoked = status == LicenseStatus.Revoked,
                     Company = obj["Company"]?.ToString(), ProductType = obj["ProductType"]?.ToString(),
                     IssuedAt = obj["IssuedAt"]?.ToString(), ExpirationDate = obj["ExpirationDate"]?.ToString(),
                     UpdateExpirationDate = obj["UpdateExpirationDate"]?.ToString(),
@@ -605,13 +591,54 @@ namespace Microi.License
             hid = hid.Trim().ToUpperInvariant();
             try
             {
-                var db = GetDb(); if (db == null) return Task.FromResult(new DosResult(0, null, "数据库未就绪"));
+                var db = GetLicenseDb(); if (db == null) return Task.FromResult(new DosResult(0, null, "授权中心独立数据库未配置或不可用"));
                 var row = db.FromSql(@"SELECT Id, HID, Company, Name, Phone, IP, ProductType,
                     Status, IssuedAt, ExpirationDate, UpdateExpirationDate, RejectReason, CreateTime, UpdateTime
                     FROM diy_license WHERE HID=@p0").AddInParameter("@p0", hid).First<dynamic>();
-                return row == null ? Task.FromResult(new DosResult(2, null, "未找到申请记录")) : Task.FromResult(new DosResult(1, row));
+                if (row == null) return Task.FromResult(new DosResult(2, null, "未找到申请记录"));
+                var data = JObject.FromObject(row);
+                data["HasApplication"] = true;
+                data["Revoked"] = string.Equals(data["Status"]?.ToString(), LicenseStatus.Revoked, StringComparison.OrdinalIgnoreCase);
+                return Task.FromResult(new DosResult(1, data));
             }
             catch (Exception ex) { return Task.FromResult(new DosResult(0, null, "查询失败：" + ex.Message)); }
+        }
+
+        /// <summary>授权中心处理客户服务器心跳，仅返回状态，不下发 LicenseContent。</summary>
+        public static Task<DosResult> ProcessHeartbeatAsync(string hid)
+        {
+            if (string.IsNullOrWhiteSpace(hid))
+                return Task.FromResult(new DosResult(0, null, "HID不能为空"));
+            hid = hid.Trim().ToUpperInvariant();
+            try
+            {
+                var db = GetLicenseDb();
+                if (db == null)
+                    return Task.FromResult(new DosResult(0, null, "授权中心独立数据库未配置或不可用"));
+                var row = db.FromSql("SELECT Status, ExpirationDate FROM diy_license WHERE HID=@p0")
+                    .AddInParameter("@p0", hid).First<dynamic>();
+                if (row == null)
+                    return Task.FromResult(new DosResult(1, new { Status = "Unknown" }));
+
+                var data = JObject.FromObject(row);
+                var status = data["Status"]?.ToString();
+                if (string.Equals(status, LicenseStatus.Revoked, StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new DosResult(1, new { Status = LicenseStatus.Revoked }));
+                if (!string.Equals(status, LicenseStatus.Issued, StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new DosResult(1, new { Status = status ?? "Unknown" }));
+
+                var expirationDate = data["ExpirationDate"]?.Value<DateTime?>();
+                return Task.FromResult(new DosResult(1, new
+                {
+                    Status = expirationDate.HasValue && expirationDate.Value.ToUniversalTime() < DateTime.UtcNow
+                        ? "Expired"
+                        : "Ok"
+                }));
+            }
+            catch (Exception ex)
+            {
+                return Task.FromResult(new DosResult(0, null, "心跳处理失败：" + ex.Message));
+            }
         }
 
         public static async Task<DosResult> ApproveAsync(string hid, string operatorName = "", string operatorIP = "")
@@ -687,37 +714,41 @@ namespace Microi.License
                 var connStr = Environment.GetEnvironmentVariable("MICROI_LICENSE_DB_CONN");
                 if (string.IsNullOrWhiteSpace(connStr))
                     connStr = ConfigHelper.GetAppSettings("LicenseDbConn");
-                if (!string.IsNullOrWhiteSpace(connStr))
+                // 授权中心数据禁止回退到 Microi 框架库。未配置独立连接时，
+                // 签发/审核/申请等中心端能力不可用，但不影响客户侧本地验签。
+                if (string.IsNullOrWhiteSpace(connStr)) return null;
+
+                var dbTypeName = Environment.GetEnvironmentVariable("MICROI_LICENSE_DB_TYPE");
+                if (string.IsNullOrWhiteSpace(dbTypeName))
+                    dbTypeName = ConfigHelper.GetAppSettings("LicenseDbType");
+
+                DatabaseType dbType;
+                if (!string.IsNullOrWhiteSpace(dbTypeName))
                 {
-                    // 从主库推断数据库类型（与主库一致）
-                    var mainDb = GetDb();
-                    if (mainDb != null)
-                        return new DbSession(mainDb.Db.DbProvider.DatabaseType, connStr);
+                    dbType = DiyCommon.GetDbInfo(dbTypeName).DbType;
                 }
-                // 回退到主库
-                return GetDb();
+                else
+                {
+                    var mainDb = GetDb();
+                    dbType = mainDb?.Db?.DbProvider?.DatabaseType ?? DatabaseType.MySql;
+                    dbTypeName = dbType.ToString();
+                }
+
+                var db = new DbSession(dbType, connStr);
+                LicenseDatabaseInitializer.Ensure(db, dbTypeName, connStr);
+                return db;
             }
-            catch { return GetDb(); }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Microi：【License】授权中心独立数据库连接失败：{ex.Message}");
+                return null;
+            }
         }
 
         /// <summary>确保 diy_license_log 表存在（自动建表）</summary>
         private static void EnsureLogTable(DbSession db)
         {
-            try
-            {
-                db.FromSql(@"CREATE TABLE IF NOT EXISTS diy_license_log (
-                    Id          VARCHAR(32)  NOT NULL PRIMARY KEY,
-                    HID         VARCHAR(64)  NOT NULL,
-                    Action      VARCHAR(20)  NOT NULL,
-                    Operator    VARCHAR(100) DEFAULT '',
-                    OperatorIP  VARCHAR(50)  DEFAULT '',
-                    Detail      VARCHAR(1000) DEFAULT '',
-                    CreateTime  DATETIME     NOT NULL,
-                    INDEX idx_log_hid (HID),
-                    INDEX idx_log_time (CreateTime)
-                )").ExecuteNonQuery();
-            }
-            catch { /* 表已存在或其他DDL错误，忽略 */ }
+            // GetLicenseDb 已通过底座 DDL 初始化 diy_license_log。
         }
 
         /// <summary>写入操作日志</summary>
@@ -953,11 +984,9 @@ namespace Microi.License
         {
             try
             {
-                var db = GetDb(); if (db == null) return null;
-                var row = db.FromSql("SELECT LicenseContent FROM diy_license WHERE HID=@p0")
-                    .AddInParameter("@p0", ValidProofDbKey).First<dynamic>();
-                if (row == null) return null;
-                var rc = ((JObject)JObject.FromObject(row))["LicenseContent"]?.ToString();
+                var proofPath = Path.Combine(AppContext.BaseDirectory, ValidProofFileName);
+                if (!File.Exists(proofPath)) return null;
+                var rc = File.ReadAllText(proofPath, Encoding.UTF8).Trim();
                 if (string.IsNullOrWhiteSpace(rc)) return null;
                 var content = AesDecrypt(rc, DeriveDbKey());
                 if (content == null) return null;

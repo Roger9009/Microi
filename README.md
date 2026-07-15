@@ -386,3 +386,8 @@ app.UseMicroiBusiness();
 </p>
 
 <p align="center">📌 群号：<b>51050055</b> &nbsp;·&nbsp; 点击徽章或扫描二维码即可加入</p>
+
+
+
+授权管理：http://localhost:1988/#/license
+授权总控台：http://localhost:1988/#/license-admin

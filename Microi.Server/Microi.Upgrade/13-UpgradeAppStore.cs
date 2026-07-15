@@ -44,57 +44,61 @@ namespace Microi.net
             var msgs = new List<string>();
             
             #region 导入数据包V8
-            //更新应用商城的导入数据包接口引擎
-            var importMicroiStorePackageResult = await MicroiEngine.FormEngine.GetFormDataAsync("sys_apiengine", new
-            {
-                OsClient = osClient,
-                _Where = new List<object>()
-                {
-                    new List<object>()
-                    {
-                        "ApiEngineKey", "=", "import-microi-store-package"
-                    }
-                },
-            });
             var importV8 = ReadEmbeddedResource("import-package.js");
-            if (importMicroiStorePackageResult.Code != 1)
+            var db = Microi.net.OsClient.GetClient(osClient).Db;
+            var importApiIdObj = db.FromSql(
+                    "SELECT Id FROM sys_apiengine WHERE ApiEngineKey = @ApiEngineKey")
+                .AddInParameter("@ApiEngineKey", "import-microi-store-package")
+                .ToScalar();
+            var importApiId = importApiIdObj == null || Convert.IsDBNull(importApiIdObj)
+                ? null
+                : Convert.ToString(importApiIdObj);
+
+            // 空库此时还没有完整的 diy_field 元数据，不能依赖 FormEngine 写入。
+            // 使用底座 DbSession 做参数化幂等 DML，确保随后 ApiEngine 的固定查询可见。
+            if (string.IsNullOrWhiteSpace(importApiId))
             {
-                var addImportMicroiStorePackageResult = await MicroiEngine.FormEngine.AddFormDataAsync("sys_apiengine", new
-                {
-                    ApiName = "[应用商城]导入Microi应用数据包",
-                    ApiEngineKey = "import-microi-store-package",
-                    ApiAddress = "/apiengine/import-microi-store-package",
-                    IsEnable = 1,
-                    OsClient = osClient,
-                    ApiV8Code = importV8
-                });
-                if(addImportMicroiStorePackageResult.Code != 1)
-                {
-                    msgs.Add(addImportMicroiStorePackageResult.Msg);
-                }
+                importApiId = Guid.NewGuid().ToString();
+                db.FromSql(@"INSERT INTO sys_apiengine
+(Id, CreateTime, UpdateTime, IsDeleted, ApiName, ApiEngineKey, ApiAddress, IsEnable, OsClient, ApiV8Code)
+VALUES
+(@Id, @Now, @Now, 0, @ApiName, @ApiEngineKey, @ApiAddress, 1, @OsClient, @ApiV8Code)")
+                    .AddInParameter("@Id", importApiId)
+                    .AddInParameter("@Now", DateTime.Now)
+                    .AddInParameter("@ApiName", "[应用商城]导入Microi应用数据包")
+                    .AddInParameter("@ApiEngineKey", "import-microi-store-package")
+                    .AddInParameter("@ApiAddress", "/apiengine/import-microi-store-package")
+                    .AddInParameter("@OsClient", osClient)
+                    .AddInParameter("@ApiV8Code", importV8)
+                    .ExecuteNonQuery();
             }
             else
             {
-                var uptImportMicroiStorePackageResult = await MicroiEngine.FormEngine.UptFormDataAsync("sys_apiengine", new
-                {
-                    Id = (string)importMicroiStorePackageResult.Data.Id,
-                    ApiName = "[应用商城]导入Microi应用数据包",
-                    ApiEngineKey = "import-microi-store-package",
-                    ApiAddress = "/apiengine/import-microi-store-package",
-                    IsEnable = 1,
-                    OsClient = osClient,
-                    ApiV8Code = importV8
-                });
-                if(uptImportMicroiStorePackageResult.Code != 1)
-                {
-                    msgs.Add(uptImportMicroiStorePackageResult.Msg);
-                }
-                else
-                {
-                    await MicroiEngine.CacheTenant.Cache(osClient).RemoveAsync($"Microi:{osClient}:FormData:sys_apiengine:import-microi-store-package");
-                    await MicroiEngine.CacheTenant.Cache(osClient).RemoveAsync($"Microi:{osClient}:FormData:sys_apiengine:{(string)importMicroiStorePackageResult.Data.Id}");
-                    await MicroiEngine.CacheTenant.Cache(osClient).RemoveAsync($"Microi:{osClient}:FormData:sys_apiengine:/apiengine/import-microi-store-package");
-                }
+                db.FromSql(@"UPDATE sys_apiengine SET
+UpdateTime = @Now, IsDeleted = 0, ApiName = @ApiName, ApiAddress = @ApiAddress,
+IsEnable = 1, OsClient = @OsClient, ApiV8Code = @ApiV8Code
+WHERE ApiEngineKey = @ApiEngineKey")
+                    .AddInParameter("@Now", DateTime.Now)
+                    .AddInParameter("@ApiName", "[应用商城]导入Microi应用数据包")
+                    .AddInParameter("@ApiEngineKey", "import-microi-store-package")
+                    .AddInParameter("@ApiAddress", "/apiengine/import-microi-store-package")
+                    .AddInParameter("@OsClient", osClient)
+                    .AddInParameter("@ApiV8Code", importV8)
+                    .ExecuteNonQuery();
+            }
+
+            await MicroiEngine.CacheTenant.Cache(osClient).RemoveAsync($"Microi:{osClient}:FormData:sys_apiengine:import-microi-store-package");
+            await MicroiEngine.CacheTenant.Cache(osClient).RemoveAsync($"Microi:{osClient}:FormData:sys_apiengine:{importApiId.ToLowerInvariant()}");
+            await MicroiEngine.CacheTenant.Cache(osClient).RemoveAsync($"Microi:{osClient}:FormData:sys_apiengine:/apiengine/import-microi-store-package");
+
+            var visibleCount = Convert.ToInt32(db.FromSql(
+                    "SELECT COUNT(1) FROM sys_apiengine WHERE IsEnable = 1 AND ApiEngineKey = @ApiEngineKey AND IsDeleted <> 1")
+                .AddInParameter("@ApiEngineKey", "import-microi-store-package")
+                .ToScalar());
+            if (visibleCount == 0)
+            {
+                msgs.Add("应用商城导入接口写入后校验失败：sys_apiengine 中无可用记录。");
+                return msgs;
             }
             #endregion
             

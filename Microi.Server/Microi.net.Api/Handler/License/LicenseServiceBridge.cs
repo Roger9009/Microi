@@ -55,7 +55,7 @@ namespace Microi.net.Api
 
         public static DosResult GenerateRegistrationPackage(string a, string b, string c, string d, string e, string f) => LicSvc.GenerateRegistrationPackage(a, b, c, d, e, f);
         public static Task<DosResult> ImportRegistrationFile(string fc) => LicSvc.ImportRegistrationFile(fc);
-        public static Task<DosResult> ImportRegistrationFile(string hid, string ec) => LicSvc.ImportRegistrationFile(ec);
+        public static Task<DosResult> ImportRegistrationFile(string hid, string ec) => LicSvc.ImportRegistrationFile(hid, ec);
 
         public static Task<DosResult> ApplyAsync(string hid, string company, string name, string phone,
             string ip, string pt, DateTime? exp, DateTime? uexp, string remark, string account, string pwd,
@@ -68,6 +68,7 @@ namespace Microi.net.Api
 
         public static Task<DosResult> CheckAsync(string hid) => LicSvc.CheckAsync(hid);
         public static Task<DosResult> QueryApplicationAsync(string hid) => LicSvc.QueryApplicationAsync(hid);
+        public static Task<DosResult> ProcessHeartbeatAsync(string hid) => LicSvc.ProcessHeartbeatAsync(hid);
 
         public static async Task<DosResult> ApproveAsync(string hid, string opName = "", string opIP = "")
             => await LicSvc.ApproveAsync(hid, opName, opIP);

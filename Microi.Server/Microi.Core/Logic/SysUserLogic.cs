@@ -1653,7 +1653,7 @@ o8uMyYMNp3PsWa7TODr7ofgxAM7ncAGmYWvjnsBxGT0=
             }
             catch (Exception ex)
             {
-                sysUser["_IsAdmin"] = false;
+                sysUser["_IsAdmin"] = sysUser["Level"].Val<int>() >= DiyCommon.MaxRoleLevel;
                 sysUser["_Roles"] = JTokenEx.FromObject(new List<SysRole>());
                 sysUser["_RoleLimits"] = JTokenEx.FromObject(new List<SysRoleLimit>());
                 sysUser["_RoleLimitsError9"] = ex.Message;
@@ -1661,7 +1661,8 @@ o8uMyYMNp3PsWa7TODr7ofgxAM7ncAGmYWvjnsBxGT0=
             }
             if (!roleIds.Any())
             {
-                sysUser["_IsAdmin"] = false;
+                // 内置管理员允许不绑定角色；权限判断由最高 Level 兜底。
+                sysUser["_IsAdmin"] = sysUser["Level"].Val<int>() >= DiyCommon.MaxRoleLevel;
                 sysUser["_Roles"] = JTokenEx.FromObject(new List<SysRole>());
                 sysUser["_RoleLimits"] = JTokenEx.FromObject(new List<SysRoleLimit>());
                 sysUser["_RoleLimitsError8"] = "!roleIds.Any()";

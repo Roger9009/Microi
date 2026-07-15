@@ -20,7 +20,7 @@ Microi License 系统采用双角色架构：
 ### 前提条件
 - 已完成[密钥配置](setup.md)
 - 已设置 `MICROI_LICENSE_PRIVATE_KEY` 环境变量
-- 数据库 `diy_license` 表已就绪
+- 已创建独立授权数据库（不得与 Microi 框架业务库共用）
 
 ### 配置建议
 
@@ -29,10 +29,16 @@ Microi License 系统采用双角色架构：
 {
   "AppSettings": {
     "LicenseHeartbeatUrl": "https://your-license-server.com/api/License/Heartbeat",
-    "LicenseContactEmail": "admin@yourcompany.com"
+    "LicenseContactEmail": "admin@yourcompany.com",
+    "LicenseDbType": "SqlServer",
+    "LicenseDbConn": "Server=db;Database=microi_license;User Id=license_user;Password=***;TrustServerCertificate=true;"
   }
 }
 ```
+
+也可使用环境变量 `MICROI_LICENSE_DB_TYPE`、`MICROI_LICENSE_DB_CONN`。授权中心启动后会通过底座 DDL
+在独立库中幂等创建 `diy_license`、`diy_license_log`。未配置独立连接时，申请、审核、签发、查询均拒绝工作，
+不会回退到 `OsClientDbConn` 指向的 Microi 框架库。
 
 ### 安全注意事项
 
@@ -62,9 +68,10 @@ Microi License 系统采用双角色架构：
 ```
 1. 前端「提交授权申请」→「离线申请：生成注册文件」
 2. 下载 .milic 注册文件
-3. 发送至 license@microi.net 或通过「直接提交到 License 服务器」
-4. 收到 license.json 后 → 「手动导入授权文件」
-5. 重启生效
+3. 发送至 license@microi.net
+4. 授权管理员在「License 授权总控台」导入 .milic 并审核签发
+5. 收到 license.json 后 → 「手动导入授权文件」
+6. 重启生效
 ```
 
 ### License 续期

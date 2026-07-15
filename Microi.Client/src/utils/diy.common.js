@@ -298,6 +298,11 @@ var DiyCommon = {
         }
         // 读取 config.json 中的配置（修改 JSON 文件后，Vite HMR 会自动更新）
         if (config && config.ApiBaseDev) {
+            // 本地开发使用 Vite 同源代理，避免 Kestrel HTTP->HTTPS 重定向导致
+            // OPTIONS 预检失败，也无需浏览器信任 .NET 开发证书。
+            if (config.ApiBaseDev === "/") {
+                return window.location.origin;
+            }
             return config.ApiBaseDev.replace(/\/+$/, "");
         }
         var result = store.state.DiyStore.ApiBase;

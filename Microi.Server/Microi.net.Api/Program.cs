@@ -284,10 +284,37 @@ if (osClientName.DosIsNullOrWhiteSpace())
     osClientName = OsClientDefault.OsClient;
 }
 
-// 【关键修复】确保主租户的 OsClientModel 已从 sys_osclients 表中正确挂载，
-// 否则 InitializeDefaultClient 创建的占位模型不会包含 MqttEnable / EnableSwagger 等 DB 字段，
-// 导致 MQTT 等可选模块无法按配置启动。
-if (!OsClient.EnsureHydrated(osClientName))
+// 确保主租户的 OsClientModel 已从 sys_osclients 挂载。底座 EnsureHydrated
+// 在 dynamic 字符串上调用扩展方法会触发 RuntimeBinderException，因此这里先转
+// JObject 再合并；Db/DbRead 会话仍沿用启动阶段已创建的对象。
+var osClientHydrated = false;
+try
+{
+    var hydratedClient = OsClient.GetClient(osClientName);
+    var dbOsClient = hydratedClient.Db.FromSql(
+            "SELECT * FROM sys_osclients WHERE OsClient = @OsClient")
+        .AddInParameter("@OsClient", osClientName)
+        .ToFirst<dynamic>();
+    if (dbOsClient != null)
+    {
+        var dbModel = JObject.FromObject(dbOsClient);
+        foreach (var property in dbModel.Properties())
+        {
+            if (property.Value.Type != JTokenType.Null)
+            {
+                hydratedClient.OsClientModel[property.Name] = property.Value;
+            }
+        }
+        hydratedClient.OsClient = osClientName;
+        OsClient.AddOrUptClient(hydratedClient);
+        osClientHydrated = true;
+    }
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"Microi：【Error异常】挂载主租户[{osClientName}]失败：{ex.Message}");
+}
+if (!osClientHydrated)
 {
     Console.WriteLine($"Microi：【⚠️警告】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】主租户[{osClientName}]的 OsClientModel 未能从 sys_osclients 完整挂载，部分 DB 配置项将以默认值生效。");
 }

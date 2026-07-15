@@ -15,6 +15,7 @@
 | GET | `/api/License/GetConfig` | 匿名 | 获取可配置项（ContactEmail、HeartbeatIntervalHours 等） |
 | GET/POST | `/api/License/GetStatus` | 匿名 | 获取 License 运行状态摘要（含心跳/宽限期/吊销信息） |
 | GET/POST | `/api/License/GetHeartbeatStatus` | 匿名 | 获取 License 心跳状态（不触发 Verify） |
+| POST | `/api/License/Heartbeat` | 匿名 | 授权中心接收客户心跳，返回 Ok/Revoked/Expired 等状态 |
 | POST | `/api/License/WriteLicenseFile` | 匿名 | 写入 License 文件到磁盘 |
 | POST | `/api/License/GenerateRegistrationFile` | 匿名 | 生成离线注册申请包 |
 | GET/POST | `/api/License/Diagnostics` | 登录 | 获取完整诊断信息 |

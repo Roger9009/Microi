@@ -6,38 +6,51 @@ namespace Microi.net
 {
     /// <summary>
     /// 必要升级：创建 diy_license 授权管理表 --2026-06-21
+    /// 建表/补列走底座 IMicroiORM，不再执行方言 SQL。
     /// </summary>
     public class UpgradeLicense
     {
         public static string Version = "5.7.7.0";
 
-        public static string Sql = @"
-CREATE TABLE IF NOT EXISTS `diy_license` (
-  `Id`                   VARCHAR(32)   NOT NULL              COMMENT '主键',
-  `HID`                  VARCHAR(128)  NOT NULL              COMMENT '硬件指纹ID（唯一）',
-  `Company`              VARCHAR(200)  DEFAULT ''            COMMENT '授权公司名称',
-  `Name`                 VARCHAR(100)  DEFAULT ''            COMMENT '联系人姓名',
-  `Phone`                VARCHAR(50)   DEFAULT ''            COMMENT '联系电话',
-  `IP`                   VARCHAR(100)  DEFAULT ''            COMMENT '服务器IP',
-  `ProductType`          VARCHAR(50)   DEFAULT 'Personal'   COMMENT '产品类型：Personal/Enterprise',
-  `Status`               VARCHAR(20)   DEFAULT 'Pending'    COMMENT '状态：Pending/Issued/Revoked/Rejected',
-  `LicenseContent`       LONGTEXT      DEFAULT NULL         COMMENT '完整License JSON内容（含RSA签名）',
-  `IssuedAt`             DATETIME      DEFAULT NULL         COMMENT '签发时间（UTC）',
-  `ExpirationDate`       DATETIME      DEFAULT NULL         COMMENT 'License到期时间',
-  `UpdateExpirationDate` DATETIME      DEFAULT NULL         COMMENT '更新服务到期时间',
-  `RejectReason`         VARCHAR(500)  DEFAULT NULL         COMMENT '驳回原因',
-  `Remark`               VARCHAR(1000) DEFAULT ''           COMMENT '备注',
-  `CreateTime`           DATETIME      NOT NULL             COMMENT '申请时间',
-  `UpdateTime`           DATETIME      DEFAULT NULL         COMMENT '最后更新时间',
-  PRIMARY KEY (`Id`),
-  UNIQUE KEY `idx_diy_license_hid` (`HID`),
-  KEY `idx_diy_license_status` (`Status`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='License授权管理表';
-";
+        /// <summary>保留空串以兼容旧调用；实际升级走 <see cref="Run"/>。</summary>
+        public static string Sql = "";
 
         public async Task<List<string>> Run(string osClient)
         {
             var msgs = new List<string>();
+            try
+            {
+                var client = OsClientExtend.GetClient(osClient);
+                if (client?.Db == null)
+                {
+                    msgs.Add($"租户[{osClient}] DbSession 不可用");
+                    return await Task.FromResult(msgs);
+                }
+
+                UpgradeDdlHelper.EnsureTableWithColumns(client, "diy_license", new[]
+                {
+                    new UpgradeDdlHelper.ColumnSpec { Name = "HID", Type = "varchar(128)", Label = "硬件指纹ID", NotNull = true },
+                    new UpgradeDdlHelper.ColumnSpec { Name = "Company", Type = "varchar(200)", Label = "授权公司名称" },
+                    new UpgradeDdlHelper.ColumnSpec { Name = "Name", Type = "varchar(100)", Label = "联系人姓名" },
+                    new UpgradeDdlHelper.ColumnSpec { Name = "Phone", Type = "varchar(50)", Label = "联系电话" },
+                    new UpgradeDdlHelper.ColumnSpec { Name = "IP", Type = "varchar(100)", Label = "服务器IP" },
+                    new UpgradeDdlHelper.ColumnSpec { Name = "ProductType", Type = "varchar(50)", Label = "产品类型" },
+                    new UpgradeDdlHelper.ColumnSpec { Name = "Status", Type = "varchar(20)", Label = "状态" },
+                    new UpgradeDdlHelper.ColumnSpec { Name = "LicenseContent", Type = "mediumtext", Label = "License内容" },
+                    new UpgradeDdlHelper.ColumnSpec { Name = "IssuedAt", Type = "datetime", Label = "签发时间" },
+                    new UpgradeDdlHelper.ColumnSpec { Name = "ExpirationDate", Type = "datetime", Label = "到期时间" },
+                    new UpgradeDdlHelper.ColumnSpec { Name = "UpdateExpirationDate", Type = "datetime", Label = "更新服务到期" },
+                    new UpgradeDdlHelper.ColumnSpec { Name = "RejectReason", Type = "varchar(500)", Label = "驳回原因" },
+                    new UpgradeDdlHelper.ColumnSpec { Name = "Remark", Type = "varchar(1000)", Label = "备注" },
+                });
+
+                UpgradeDdlHelper.EnsureIndex(client, "diy_license", "idx_diy_license_hid", "HID", unique: true);
+                UpgradeDdlHelper.EnsureIndex(client, "diy_license", "idx_diy_license_status", "Status");
+            }
+            catch (Exception ex)
+            {
+                msgs.Add(ex.Message);
+            }
             return await Task.FromResult(msgs);
         }
     }

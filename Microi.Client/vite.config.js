@@ -81,7 +81,22 @@ export default defineConfig({
         host: '0.0.0.0',
         https: false,
         proxy: {
-            // 如果需要代理 API 请求，在这里配置
+            '/api': {
+                target: 'https://localhost:7266',
+                changeOrigin: true,
+                secure: false
+            },
+            '/apiengine': {
+                target: 'https://localhost:7266',
+                changeOrigin: true,
+                secure: false
+            },
+            '/diy-websocket': {
+                target: 'https://localhost:7266',
+                changeOrigin: true,
+                secure: false,
+                ws: true
+            }
         },
         // 开发环境禁用 index.html 缓存
         headers: {

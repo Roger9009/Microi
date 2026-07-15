@@ -112,11 +112,23 @@ namespace Dos.ORM
             try
             {
                 dynamic session = (object)_trans ?? param.DbSession;
+                // 列已存在则跳过，保证升级脚本 / FormEngine.AddDiyField 幂等
+                object exists = session.FromSql(
+                    $"SELECT COL_LENGTH(N'{param.TableName}', N'{param.FieldName}')").ToScalar();
+                if (exists != null && !Convert.IsDBNull(exists))
+                    return new DosResult(1, null, "列已存在");
+
                 session.FromSql(sql).ExecuteNonQuery();
                 return new DosResult(1);
             }
             catch (Exception ex)
             {
+                var msg = ex.Message ?? "";
+                // SQL Server：重复加列
+                if (msg.IndexOf("多次指定了列名", StringComparison.OrdinalIgnoreCase) >= 0
+                    || msg.IndexOf("already exists", StringComparison.OrdinalIgnoreCase) >= 0
+                    || msg.IndexOf("duplicate column", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return new DosResult(1);
                 return new DosResult(0, null, $"添加字段失败: {ex.Message}");
             }
         }

@@ -31,18 +31,43 @@ namespace Microi.net
                 var _formEngine = app.ApplicationServices.GetRequiredService<IFormEngine>();
                 if (scheduledTask != null)
                 {
+                    // 核心 Schema 必须同步完成：Program.cs 会在 UseMicroiUpgrade() 返回后立即
+                    // EnsureHydrated，若仍放在 Task.Run 中会与 sys_osclients 挂载产生竞态。
+                    foreach (var clientModelItem in OsClient.ClientList)
+                    {
+                        var readyClient = OsClient.GetClient(clientModelItem.Key);
+                        var dbConn = readyClient.OsClientModel?["DbConn"]?.ToString();
+                        if (string.IsNullOrWhiteSpace(dbConn)) continue;
+                        try
+                        {
+                            var initialized = CoreTableInitializer.EnsureTables(readyClient);
+                            var dbTypeReady = readyClient.OsClientModel?["DbType"]?.ToString() ?? "MySql";
+                            if (initialized)
+                            {
+                                Console.WriteLine($"Microi：【✅】核心平台表已就绪（{dbTypeReady}，底座 DDL）。");
+                            }
+                            else
+                            {
+                                Console.WriteLine($"Microi：【⚠️】核心平台表未完成初始化（{dbTypeReady}，DbSession 不可用）。");
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Microi：【⚠️】核心表初始化：{ex.Message.Split('\n')[0]}");
+                        }
+                    }
+
                     #region 平台自动升级
                     Task.Run(async () =>
                     {
                         foreach (var clientModelItem in OsClient.ClientList)
                         {
-                            // 跳过没有数据库连接的租户
                             var dbConn = clientModelItem.Value.OsClientModel?["DbConn"]?.ToString();
-                            if (string.IsNullOrWhiteSpace(dbConn))
-                            {
-                                Console.WriteLine($"Microi：【⚠️警告】平台自动升级跳过租户【{clientModelItem.Value.OsClient}】：数据库连接（DbConn）未配置。");
-                                continue;
-                            }
+                            if (string.IsNullOrWhiteSpace(dbConn)) { Console.WriteLine($"Microi：【⚠️】跳过无 DB 租户 [{clientModelItem.Value.OsClient}]"); continue; }
+
+                            // diy_lang / diy_license 物理表已由 CoreTableInitializer（底座 AddDiyTable/AddColumn）创建；
+                            // 多语言数据与接口种子由后续 Upgrade() 脚本写入。
+
                             try
                             {
                                 //获取当前数据库版本号

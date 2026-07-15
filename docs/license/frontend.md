@@ -48,15 +48,13 @@ License 管理页面路由已在 `asyncRoutes` 中注册：
 
 ## 页面结构
 
-`views/system/license.vue`（1294 行）包含 5 个 Tab：
+`views/system/license.vue` 是客户侧授权页面，包含 3 个 Tab：
 
 | Tab | 功能 | 用户权限 |
 |-----|------|---------|
 | **提交授权申请** | 在线/离线申请 License | 匿名 |
 | **检查并部署License** | 查询签发状态、自动/手动部署 | 匿名 |
 | **手动导入授权文件** | 上传 .lic 文件或粘贴 JSON | 匿名 |
-| **License 管理** | 列表查看、审核、签发、作废 | 超级管理员 |
-| **操作日志** | 按 HID 筛选操作记录 | 超级管理员 |
 
 ## 在线申请流程（前端调用链）
 
@@ -69,6 +67,9 @@ License 管理页面路由已在 `asyncRoutes` 中注册：
   → 检查状态（fetch LICENSE_API_BASE + /api/License/Check）
   → 部署（调用本地 /api/License/WriteLicenseFile）
 ```
+
+在线申请只有这一条入口，直接写入授权中心独立数据库并立即出现在总控台待审核列表。
+`.milic` 仅用于无法联网的离线场景，不再提供“生成后直接提交注册文件”的重复在线入口。
 
 ## 特殊说明
 
@@ -124,8 +125,11 @@ console.log('诊断:', JSON.stringify(diag.Data, null, 2));
 1. 登录平台（使用超级管理员账号）
 2. 访问 /#/license-admin
 3. 系统自动加载所有授权客户列表
-4. 可执行：审核申请、直接签发、驳回、作废等操作
+4. 可导入客户提交的 `.milic` 注册文件
+5. 可执行：审核申请、直接签发、驳回、作废等操作
 ```
+
+总控台请求会携带当前平台登录 Token；`ImportRegistrationFile` 仅允许超级管理员调用。
 
 ## 监控仪表盘集成
 

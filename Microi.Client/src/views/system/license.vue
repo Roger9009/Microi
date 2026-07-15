@@ -129,18 +129,6 @@
                                     </el-form-item>
                                     <el-row :gutter="20">
                                         <el-col :span="12" :xs="24">
-                                            <el-form-item label="授权账号" required>
-                                                <el-input v-model="applyForm.Account" placeholder="平台账号" clearable />
-                                            </el-form-item>
-                                        </el-col>
-                                        <el-col :span="12" :xs="24">
-                                            <el-form-item label="授权密码" required>
-                                                <el-input v-model="applyForm.Password" type="password" placeholder="平台密码" show-password clearable />
-                                            </el-form-item>
-                                        </el-col>
-                                    </el-row>
-                                    <el-row :gutter="20">
-                                        <el-col :span="12" :xs="24">
                                             <el-form-item label="公司名称" required>
                                                 <el-input v-model="applyForm.Company" placeholder="贵公司名称" clearable />
                                             </el-form-item>
@@ -187,33 +175,10 @@
                                         <template #title>
                                             <strong>内网/离线部署？</strong>
                                             点击「生成注册文件」下载 <code>microi-registration.milic</code>，
-                                            可发送至 <strong>{{ contactEmail }}</strong>，或直接提交到 License 服务器。
+                                            发送至 <strong>{{ contactEmail }}</strong>，由授权总控台导入。
                                             收到授权后在「手动导入授权文件」选项卡导入。
                                         </template>
                                     </el-alert>
-
-                                    <!-- 生成注册文件后显示直接提交面板 -->
-                                    <el-card v-if="regFileData" shadow="never" style="margin-top:12px;border:1px dashed #409eff">
-                                        <template #header>
-                                            <span style="color:#409eff"><el-icon><Upload /></el-icon> 直接提交到 License 服务器（不发邮件）</span>
-                                        </template>
-                                        <el-form label-width="110px" label-position="left" size="small">
-                                            <el-form-item label="服务器地址">
-                                                <el-input v-model="regServerUrl"
-                                                    placeholder="例如：https://license.yourcompany.com"
-                                                    style="width:360px" clearable />
-                                                <span style="margin-left:8px;color:#909399;font-size:12px">带协议不带路径</span>
-                                            </el-form-item>
-                                            <el-form-item>
-                                                <el-button type="primary" :loading="submittingReg" @click="submitRegistrationToServer">
-                                                    <el-icon><Check /></el-icon> 直接提交注册文件
-                                                </el-button>
-                                                <span style="margin-left:12px;color:#909399;font-size:12px">
-                                                    将自动 POST 到 <code>{{ regServerUrl }}/api/License/ImportRegistrationFile</code>
-                                                </span>
-                                            </el-form-item>
-                                        </el-form>
-                                    </el-card>
                                 </el-form>
                             </el-tab-pane>
 
@@ -316,120 +281,6 @@
                                     </div>
                                 </div>
                             </el-tab-pane>
-                            <!-- TAB 4: 管理员 - License 列表管理 -->
-                            <el-tab-pane v-if="isSuperAdmin" name="admin">
-                                <template #label>
-                                    <span><el-icon><Setting /></el-icon> License 管理</span>
-                                </template>
-                                <div class="admin-section">
-                                    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
-                                        <el-select v-model="adminFilter" placeholder="筛选状态" clearable style="width:140px" @change="loadLicenseList">
-                                            <el-option label="全部" value="" />
-                                            <el-option label="待审核" value="Pending" />
-                                            <el-option label="已签发" value="Issued" />
-                                            <el-option label="已驳回" value="Rejected" />
-                                            <el-option label="已作废" value="Revoked" />
-                                        </el-select>
-                                        <el-button type="primary" :loading="adminLoading" @click="loadLicenseList">
-                                            <el-icon><Refresh /></el-icon> 刷新
-                                        </el-button>
-                                        <el-divider direction="vertical" />
-                                        <el-button type="success" @click="showIssueDialog = true">
-                                            <el-icon><Plus /></el-icon> 直接签发 License
-                                        </el-button>
-                                    </div>
-
-                                    <el-table :data="licenseList" border stripe v-loading="adminLoading" style="width:100%">
-                                        <el-table-column prop="HID" label="HID" min-width="220" show-overflow-tooltip />
-                                        <el-table-column prop="Company" label="公司" min-width="120" />
-                                        <el-table-column prop="Name" label="联系人" width="80" />
-                                        <el-table-column prop="ProductType" label="版本" width="80">
-                                            <template #default="scope">
-                                                <el-tag :type="scope.row.ProductType === 'Enterprise' ? 'danger' : 'warning'" size="small">
-                                                    {{ scope.row.ProductType === 'Enterprise' ? '企业' : '个人' }}
-                                                </el-tag>
-                                            </template>
-                                        </el-table-column>
-                                        <el-table-column prop="Status" label="状态" width="90">
-                                            <template #default="scope">
-                                                <el-tag :type="statusTagType(scope.row.Status)" size="small">
-                                                    {{ statusLabel(scope.row.Status) }}
-                                                </el-tag>
-                                            </template>
-                                        </el-table-column>
-                                        <el-table-column prop="ExpirationDate" label="到期时间" width="120" />
-                                        <el-table-column label="操作" width="200" fixed="right">
-                                            <template #default="scope">
-                                                <el-button v-if="scope.row.Status === 'Pending'" type="success" size="small" @click="adminApprove(scope.row)">通过</el-button>
-                                                <el-button v-if="scope.row.Status === 'Pending'" type="danger" size="small" @click="adminReject(scope.row)">驳回</el-button>
-                                                <el-button v-if="scope.row.Status === 'Issued'" type="warning" size="small" @click="adminRevoke(scope.row, true)">作废</el-button>
-                                                <el-button v-if="scope.row.Status === 'Revoked'" type="primary" size="small" @click="adminRevoke(scope.row, false)">恢复</el-button>
-                                                <el-button size="small" @click="viewLogs(scope.row.HID)">日志</el-button>
-                                            </template>
-                                        </el-table-column>
-                                    </el-table>
-                                </div>
-                            </el-tab-pane>
-
-                            <!-- TAB 5: 管理员 - 操作日志 -->
-                            <el-tab-pane v-if="isSuperAdmin" name="logs">
-                                <template #label>
-                                    <span><el-icon><Document /></el-icon> 操作日志</span>
-                                </template>
-                                <div class="logs-section">
-                                    <div style="display:flex;gap:8px;margin-bottom:16px;align-items:center">
-                                        <el-input v-model="logHidFilter" placeholder="按HID筛选" clearable style="width:280px" @keyup.enter="loadLogs" />
-                                        <el-button type="primary" :loading="logsLoading" @click="loadLogs">
-                                            <el-icon><Refresh /></el-icon> 查询
-                                        </el-button>
-                                    </div>
-                                    <el-table :data="logList" border stripe v-loading="logsLoading" style="width:100%">
-                                        <el-table-column prop="HID" label="HID" min-width="220" show-overflow-tooltip />
-                                        <el-table-column prop="Action" label="操作" width="90">
-                                            <template #default="scope">
-                                                <el-tag :type="logActionTag(scope.row.Action)" size="small">
-                                                    {{ scope.row.Action }}
-                                                </el-tag>
-                                            </template>
-                                        </el-table-column>
-                                        <el-table-column prop="Operator" label="操作人" width="100" />
-                                        <el-table-column prop="OperatorIP" label="IP" width="130" />
-                                        <el-table-column prop="Detail" label="详情" min-width="200" show-overflow-tooltip />
-                                        <el-table-column prop="CreateTime" label="时间" width="160" />
-                                    </el-table>
-                                </div>
-                            </el-tab-pane>
-
-                            <!-- 直接签发 License 弹窗 -->
-                            <el-dialog v-model="showIssueDialog" title="直接签发 License" width="550px" :close-on-click-modal="false">
-                                <el-form :model="issueForm" label-width="100px">
-                                    <el-form-item label="HID" required>
-                                        <el-input v-model="issueForm.HID" placeholder="硬件指纹" />
-                                    </el-form-item>
-                                    <el-form-item label="公司名称" required>
-                                        <el-input v-model="issueForm.Company" placeholder="授权公司" />
-                                    </el-form-item>
-                                    <el-form-item label="联系人">
-                                        <el-input v-model="issueForm.Name" placeholder="联系人" />
-                                    </el-form-item>
-                                    <el-form-item label="联系电话">
-                                        <el-input v-model="issueForm.Phone" placeholder="电话" />
-                                    </el-form-item>
-                                    <el-form-item label="产品版本">
-                                        <el-select v-model="issueForm.ProductType" style="width:100%">
-                                            <el-option label="个人版 Personal" value="Personal" />
-                                            <el-option label="企业版 Enterprise" value="Enterprise" />
-                                        </el-select>
-                                    </el-form-item>
-                                    <el-form-item label="到期时间">
-                                        <el-date-picker v-model="issueForm.ExpirationDate" type="date" placeholder="选择到期日" style="width:100%" value-format="YYYY-MM-DD" />
-                                    </el-form-item>
-                                </el-form>
-                                <template #footer>
-                                    <el-button @click="showIssueDialog = false">取消</el-button>
-                                    <el-button type="primary" :loading="issuing" @click="doIssue">确认签发</el-button>
-                                </template>
-                            </el-dialog>
                         </el-tabs>
                     </el-card>
                 </template>
@@ -439,14 +290,14 @@
 </template>
 
 <script>
-import { Refresh, Monitor, CopyDocument, EditPen, Promotion, Search, Download, Upload, FolderOpened, Check, Setting, Plus, Document } from "@element-plus/icons-vue";
+import { Refresh, Monitor, CopyDocument, EditPen, Promotion, Search, Download, Upload, FolderOpened, Check } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 
 const LICENSE_API_BASE = "https://api.itdos.com";
 
 export default {
     name: "system_license",
-    components: { Refresh, Monitor, CopyDocument, EditPen, Promotion, Search, Download, Upload, FolderOpened, Check, Setting, Plus, Document },
+    components: { Refresh, Monitor, CopyDocument, EditPen, Promotion, Search, Download, Upload, FolderOpened, Check },
     data() {
         return {
             pageLoading: true,
@@ -461,8 +312,6 @@ export default {
             // 申请表单
             activeTab: "apply",
             applyForm: {
-                Account: "",
-                Password: "",
                 Company: "",
                 Name: "",
                 Phone: "",
@@ -483,23 +332,6 @@ export default {
             generatingReg: false,
             // 联系邮筱（从接口动态加载，替代硬编码）
             contactEmail: "license@microi.net",
-            // 离线注册文件生成后的数据（用于直接提交）
-            regFileData: null,
-            // License 服务器地址（直接提交时使用）
-            regServerUrl: "",
-            // 直接提交中状态
-            submittingReg: false,
-            // ── 管理员面板 ──
-            isSuperAdmin: false,
-            adminLoading: false,
-            licenseList: [],
-            adminFilter: "",
-            showIssueDialog: false,
-            issueForm: { HID: "", Company: "", Name: "", Phone: "", ProductType: "Personal", ExpirationDate: "" },
-            issuing: false,
-            logsLoading: false,
-            logList: [],
-            logHidFilter: "",
         };
     },
     mounted() {
@@ -538,8 +370,6 @@ export default {
                         self.queryExistingApplication();
                         self.loadCaptcha();
                     }
-                    // 探测是否为超级管理员
-                    self.checkSuperAdmin();
                 });
             });
         },
@@ -646,14 +476,6 @@ export default {
                 ElMessage.warning("HID获取失败，请刷新页面重试");
                 return;
             }
-            if (!self.applyForm.Account.trim()) {
-                ElMessage.warning("请填写授权账号");
-                return;
-            }
-            if (!self.applyForm.Password) {
-                ElMessage.warning("请填写授权密码");
-                return;
-            }
             if (!self.applyForm.Company.trim()) {
                 ElMessage.warning("请填写公司名称");
                 return;
@@ -678,8 +500,6 @@ export default {
             self.applying = true;
             const param = {
                 HID: self.hid,
-                Account: self.applyForm.Account.trim(),
-                Password: self.applyForm.Password,
                 Company: self.applyForm.Company.trim(),
                 Name: self.applyForm.Name.trim(),
                 Phone: self.applyForm.Phone.trim(),
@@ -826,7 +646,7 @@ export default {
                 if (result && result.Code === 1 && result.Data) {
                     const data     = result.Data;
                     const fileName = data.FileName || "microi-registration.milic";
-                    const content  = data.EncryptedContent || "";
+                    const content  = data.FileContent || data.EncryptedContent || "";
                     const blob     = new Blob([content], { type: "application/octet-stream" });
                     const url      = URL.createObjectURL(blob);
                     const a        = document.createElement("a");
@@ -837,46 +657,13 @@ export default {
                     document.body.removeChild(a);
                     URL.revokeObjectURL(url);
                     const email = data.ContactEmail || self.contactEmail;
-                    // 保存注册文件数据，用于直接提交
-                    self.regFileData = { HID: data.HID, EncryptedContent: data.EncryptedContent };
-                    ElMessage.success(`注册文件已下载（${fileName}），可直接提交到 License 服务器，或发送至 ${email}`);
+                    ElMessage.success(`注册文件已下载（${fileName}），请发送至 ${email}，由授权总控台导入`);
                 } else {
                     ElMessage.error((result && result.Msg) || "生成注册文件失败");
                 }
             }, function () {
                 self.generatingReg = false;
                 ElMessage.error("请求失败，请检查服务是否正常");
-            });
-        },
-
-        // 将注册文件直接 POST 到 License 服务器（不经邮件）
-        submitRegistrationToServer() {
-            const self = this;
-            if (!self.regFileData) { ElMessage.warning("请先生成注册文件"); return; }
-            const url = (self.regServerUrl || "").trim().replace(/\/$/, "");
-            if (!url) { ElMessage.warning("请输入 License 服务器地址"); return; }
-
-            self.submittingReg = true;
-            fetch(`${url}/api/License/ImportRegistrationFile`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    HID: self.regFileData.HID,
-                    EncryptedContent: self.regFileData.EncryptedContent
-                })
-            })
-            .then(res => res.json())
-            .then(result => {
-                self.submittingReg = false;
-                if (result && result.Code === 1) {
-                    ElMessage.success("注册文件已成功提交到 License 服务器，等待管理员审核");
-                } else {
-                    ElMessage.error((result && result.Msg) || "提交失败");
-                }
-            })
-            .catch(err => {
-                self.submittingReg = false;
-                ElMessage.error("提交失败，请检查服务器地址是否正确及是否允许跨域：" + err.message);
             });
         },
 

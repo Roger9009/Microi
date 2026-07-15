@@ -227,6 +227,25 @@ namespace Microi.net.Api
         }
 
         /// <summary>
+        /// 授权中心接收客户服务器心跳，返回 Ok/Revoked/Expired/Pending/Unknown。
+        /// </summary>
+        [HttpPost]
+        [AllowAnonymous]
+        public async Task<JsonResult> Heartbeat([FromBody] LicenseHeartbeatRequest request)
+        {
+            if (!CheckAnonRateLimit())
+                return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
+            try
+            {
+                return Json(await LicenseService.ProcessHeartbeatAsync(request?.HID));
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "心跳处理失败: " + ex.Message));
+            }
+        }
+
+        /// <summary>
         /// 获取当前服务器的硬件指纹ID（匿名可访问，本地操作）
         /// </summary>
         [HttpGet, HttpPost]
@@ -448,23 +467,16 @@ namespace Microi.net.Api
         /// 匿名可访问（内网上传场景），�?IP+HID 双维�?60 秒限流防滥用�?
         /// </summary>
         [HttpPost]
-        [AllowAnonymous]
         public async Task<JsonResult> ImportRegistrationFile([FromBody] ImportRegistrationRequest request)
         {
-            // IP + HID 双维度限流：60 秒内�?IP 最�?1 �?
-            var clientIp = HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',').FirstOrDefault()?.Trim()
-                ?? HttpContext.Request.Headers["X-Real-IP"].FirstOrDefault()
-                ?? HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-            var throttleKey = $"{clientIp}|{request?.HID?.Trim().ToUpperInvariant()}";
-            if (ImportThrottle.TryGetValue(throttleKey, out var lastTime)
-                && (DateTime.UtcNow - lastTime).TotalSeconds < 60)
-                return Json(new DosResult(0, null, "提交过于频繁，请 60 秒后重试"));
-            ImportThrottle[throttleKey] = DateTime.UtcNow;
+            var currentUser = await DiyToken.GetCurrentUser();
+            if (currentUser == null || currentUser["Level"].Val<int>() < DiyCommon.MaxRoleLevel)
+                return Json(new DosResult(0, null, "仅授权总控台超级管理员可导入注册文件"));
 
             try
             {
                 var result = await LicenseService.ImportRegistrationFile(
-                    request?.HID, request?.EncryptedContent);
+                    request?.HID, request?.FileContent ?? request?.EncryptedContent);
                 return Json(result);
             }
             catch (Exception ex)
@@ -472,10 +484,6 @@ namespace Microi.net.Api
                 return Json(new DosResult(0, null, "导入失败: " + ex.Message));
             }
         }
-
-        // 简单内存限流表（进程级别，重启后清零，足够防止突发滥用�?
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime>
-            ImportThrottle = new();
 
         /// <summary>
         /// 生成 RSA 2048 密钥对（License服务器初始化使用，仅超级管理员可调用�?
@@ -554,6 +562,16 @@ namespace Microi.net.Api
         public string HID { get; set; }
         /// <summary>加密的注册包内容�?milic 文件内容�?/summary>
         public string EncryptedContent { get; set; }
+        /// <summary>完整 .milic 文件内容（v2 信封格式，可自动读取 HID）</summary>
+        public string FileContent { get; set; }
+    }
+
+    public class LicenseHeartbeatRequest
+    {
+        public string HID { get; set; }
+        public string LicenseHash { get; set; }
+        public string LocalTime { get; set; }
+        public string ProductType { get; set; }
     }
 
     /// <summary>

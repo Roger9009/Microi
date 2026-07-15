@@ -1,22 +1,18 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Dos.Common;
 using Dos.ORM;
 
 namespace Microi.net
 {
-    /// <summary>
-    /// 
-    /// </summary>
-	public class MicroiUpgrade : IMicroiUpgrade
+    public class MicroiUpgrade : IMicroiUpgrade
     {
-        /// <summary>
-        /// 
-        /// </summary>
-        /// <returns></returns>
         public async Task<DosResultList<MicroiUpgradeResult>> Upgrade(string CurrentVersion, OsClientSecret osClientSecret)
         {
+            var dbType = osClientSecret.OsClientModel?["DbType"]?.ToString() ?? "MySql";
+
             if (!CurrentVersion.DosIsNullOrWhiteSpace() && CurrentVersion.DosSplit('.').Length != 4)
             {
                 Console.WriteLine($"Microi：【Error异常】microi sys_config verison value is error.");
@@ -31,20 +27,23 @@ namespace Microi.net
             {
                 try
                 {
-                    var count = osClientSecret.Db.FromSql(UpgradeAppDisplay.Sql).ExecuteNonQuery();
+                    UpgradeDdlHelper.EnsureColumn(osClientSecret, "Diy_Field", "AppVisible", "int", "移动端可见");
+                    UpgradeDdlHelper.EnsureColumn(osClientSecret, "Sys_Menu", "AppDisplay", "int", "移动端显示");
+                    // 仅数据回填走 SQL（DML），建列已走底座
+                    try
+                    {
+                        osClientSecret.Db.FromSql("UPDATE diy_field SET AppVisible=1 WHERE AppVisible IS NULL").ExecuteNonQuery();
+                        osClientSecret.Db.FromSql("UPDATE sys_menu SET AppDisplay=1 WHERE AppDisplay IS NULL").ExecuteNonQuery();
+                    }
+                    catch { /* 表可能尚无业务数据 */ }
                     Console.WriteLine($"Microi：【成功】平台自动升级【{osClientSecret.OsClient}】【升级AppDisplay、AppVisible】成功！");
                     needUptServerVersion = true;
                     uptVersion = UpgradeAppDisplay.Version;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Microi：【Error异常】平台自动升级【{osClientSecret.OsClient}】【升级AppDisplay、AppVisible】失败：{ex.Message}");//。Sql：{UpgradeAppDisplay.Sql}。
+                    Console.WriteLine($"Microi：【Error异常】平台自动升级【{osClientSecret.OsClient}】【升级AppDisplay、AppVisible】失败：{ex.Message}");
                 }
-                // result.Add(new MicroiUpgrade()
-                // {
-                //     Version = UpgradeAppDisplay.Version,
-                //     Sql = UpgradeAppDisplay.Sql,
-                // });
             }
             #endregion
 
@@ -53,25 +52,33 @@ namespace Microi.net
             {
                 try
                 {
-                    var msgs = await new UpgradeSysConfig().Run(osClientSecret.OsClient);
-                    if (msgs.Count > 0)
+                    // 物理列走底座；FormEngine 负责 diy_field 元数据
+                    UpgradeDdlHelper.EnsureColumn(osClientSecret, "sys_config", "ServerVersion", "varchar(50)", "服务器端版本号");
+                    UpgradeDdlHelper.EnsureColumn(osClientSecret, "sys_config", "ClientVersion", "varchar(50)", "客户器端版本号");
+                    UpgradeDdlHelper.EnsureColumn(osClientSecret, "sys_config", "PrintSqlToPage", "int", "返回sql到前端");
+                    UpgradeDdlHelper.EnsureColumn(osClientSecret, "sys_config", "CaptchaConfig", "mediumtext", "验证码配置");
+
+                    var msgs = FilterRealUpgradeErrors(await new UpgradeSysConfig().Run(osClientSecret.OsClient));
+                    foreach (var msg in msgs)
+                        Console.WriteLine($"Microi：【Error异常】平台自动升级【{osClientSecret.OsClient}】【升级sys_config】失败：{msg}");
+
+                    // 仅保留 diy_field 元数据 INSERT（幂等）
+                    try
                     {
-                        foreach (var msg in msgs)
-                        {
-                            Console.WriteLine($"Microi：【Error异常】平台自动升级【{osClientSecret.OsClient}】【升级sys_config】失败：{msg}");
-                        }
+                        osClientSecret.Db.FromSql(UpgradeSqlConverter.Convert(UpgradeSysConfig.Sql, dbType)).ExecuteNonQuery();
                     }
-                    else
+                    catch (Exception sqlEx)
                     {
-                        var count = osClientSecret.Db.FromSql(UpgradeSysConfig.Sql).ExecuteNonQuery();
-                        Console.WriteLine($"Microi：【成功】平台自动升级【{osClientSecret.OsClient}】【升级sys_config】成功！");
-                        needUptServerVersion = true;
-                        uptVersion = UpgradeSysConfig.Version;
+                        // ALTER 已由底座完成；仅记录 INSERT 元数据失败
+                        Console.WriteLine($"Microi：【⚠️】平台自动升级【{osClientSecret.OsClient}】【升级sys_config】元数据SQL：{sqlEx.Message.Split('\n')[0]}");
                     }
+                    Console.WriteLine($"Microi：【成功】平台自动升级【{osClientSecret.OsClient}】【升级sys_config】成功！");
+                    needUptServerVersion = true;
+                    uptVersion = UpgradeSysConfig.Version;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Microi：【Error异常】平台自动升级【{osClientSecret.OsClient}】【升级sys_config】失败：{ex.Message}");//。Sql：{UpgradeSysConfig.Sql}。
+                    Console.WriteLine($"Microi：【Error异常】平台自动升级【{osClientSecret.OsClient}】【升级sys_config】失败：{ex.Message}");
                 }
             }
             #endregion
@@ -81,14 +88,23 @@ namespace Microi.net
             {
                 try
                 {
-                    var count = osClientSecret.Db.FromSql(UpgradeLang.Sql).ExecuteNonQuery();
+                    // 建表/补列走底座；脚本中的 CREATE 会被 IF NOT EXISTS / OBJECT_ID 幂等消化
+                    UpgradeDdlHelper.EnsureTableWithColumns(osClientSecret, "diy_lang", new[]
+                    {
+                        new UpgradeDdlHelper.ColumnSpec { Name = "Key", Type = "varchar(50)", Label = "Key" },
+                        new UpgradeDdlHelper.ColumnSpec { Name = "ZhCN", Type = "varchar(50)", Label = "中文简体" },
+                        new UpgradeDdlHelper.ColumnSpec { Name = "En", Type = "varchar(50)", Label = "英语" },
+                        new UpgradeDdlHelper.ColumnSpec { Name = "ZhTW", Type = "varchar(50)", Label = "中文繁体" },
+                        new UpgradeDdlHelper.ColumnSpec { Name = "Code", Type = "varchar(50)", Label = "Code" },
+                    });
+                    var count = osClientSecret.Db.FromSql(UpgradeSqlConverter.Convert(UpgradeLang.Sql, dbType)).ExecuteNonQuery();
                     Console.WriteLine($"Microi：【成功】平台自动升级【{osClientSecret.OsClient}】【升级多语言】成功！");
                     needUptServerVersion = true;
                     uptVersion = UpgradeLang.Version;
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Microi：【Error异常】平台自动升级【{osClientSecret.OsClient}】【升级多语言】失败：{ex.Message}");//。Sql：{UpgradeLang.Sql}。
+                    Console.WriteLine($"Microi：【Error异常】平台自动升级【{osClientSecret.OsClient}】【升级多语言】失败：{ex.Message}");
                 }
             }
             #endregion
@@ -106,7 +122,7 @@ namespace Microi.net
             //                 Console.WriteLine($"Microi：【异步】平台自动升级【{osClientSecret.OsClient}】【升级sys_menu】失败：{msg}");
             //             }
             //         } 
-            //         var count = osClientSecret.Db.FromSql(UpgradeSysMenu.Sql).ExecuteNonQuery();
+            //         var count = osClientSecret.Db.FromSql(UpgradeSqlConverter.Convert(UpgradeSysMenu.Sql, dbType)).ExecuteNonQuery();
             //         Console.WriteLine($"Microi：【异步】平台自动升级【{osClientSecret.OsClient}】【升级sys_menu】成功！");
             //     }
             //     catch (Exception ex)
@@ -126,21 +142,17 @@ namespace Microi.net
             {
                 try
                 {
-                    var msgs = await new UpgradeApiEngine().Run(osClientSecret.OsClient);
-                    if (msgs.Count > 0)
-                    {
-                        foreach (var msg in msgs)
-                        {
-                            Console.WriteLine($"Microi：【Error异常】平台自动升级【{osClientSecret.OsClient}】【升级ApiEngine】失败：{msg}");
-                        }
-                    }
-                    else
-                    {
-                        var count = osClientSecret.Db.FromSql(UpgradeApiEngine.Sql).ExecuteNonQuery();
-                        Console.WriteLine($"Microi：【成功】平台自动升级【{osClientSecret.OsClient}】【升级ApiEngine】成功！");
-                        needUptServerVersion = true;
-                        uptVersion = UpgradeApiEngine.Version;
-                    }
+                    UpgradeDdlHelper.EnsureColumn(osClientSecret, "sys_apiengine", "ApiRemark", "mediumtext", "接口说明");
+                    UpgradeDdlHelper.EnsureColumn(osClientSecret, "sys_apiengine", "Files", "mediumtext", "相关附件");
+
+                    var msgs = FilterRealUpgradeErrors(await new UpgradeApiEngine().Run(osClientSecret.OsClient));
+                    foreach (var msg in msgs)
+                        Console.WriteLine($"Microi：【Error异常】平台自动升级【{osClientSecret.OsClient}】【升级ApiEngine】失败：{msg}");
+
+                    var count = osClientSecret.Db.FromSql(UpgradeSqlConverter.Convert(UpgradeApiEngine.Sql, dbType)).ExecuteNonQuery();
+                    Console.WriteLine($"Microi：【成功】平台自动升级【{osClientSecret.OsClient}】【升级ApiEngine】成功！");
+                    needUptServerVersion = true;
+                    uptVersion = UpgradeApiEngine.Version;
                 }
                 catch (Exception ex)
                 {
@@ -371,10 +383,15 @@ namespace Microi.net
             {
                 try
                 {
-                    var count = osClientSecret.Db.FromSql(UpgradeLicense.Sql).ExecuteNonQuery();
-                    Console.WriteLine($"Microi：【成功】平台自动升级【{osClientSecret.OsClient}】【升级14 - 2026-06-21 创建diy_license表】成功！");
-                    needUptServerVersion = true;
-                    uptVersion = UpgradeLicense.Version;
+                    var msgs = FilterRealUpgradeErrors(await new UpgradeLicense().Run(osClientSecret.OsClient));
+                    foreach (var msg in msgs)
+                        Console.WriteLine($"Microi：【Error异常】平台自动升级【{osClientSecret.OsClient}】【升级14 - 2026-06-21 创建diy_license表】失败：{msg}");
+                    if (msgs.Count == 0)
+                    {
+                        Console.WriteLine($"Microi：【成功】平台自动升级【{osClientSecret.OsClient}】【升级14 - 2026-06-21 创建diy_license表】成功！");
+                        needUptServerVersion = true;
+                        uptVersion = UpgradeLicense.Version;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -400,6 +417,25 @@ namespace Microi.net
             #endregion
             return new DosResultList<MicroiUpgradeResult>(1, result);
         }
+
+        /// <summary>
+        /// 过滤“列/字段已存在”等可忽略的升级噪音，避免阻断后续 SQL 补丁。
+        /// </summary>
+        private static List<string> FilterRealUpgradeErrors(List<string> msgs)
+        {
+            if (msgs == null || msgs.Count == 0) return new List<string>();
+            return msgs.Where(m =>
+            {
+                if (string.IsNullOrWhiteSpace(m)) return false;
+                return m.IndexOf("多次指定了列名", StringComparison.OrdinalIgnoreCase) < 0
+                    && m.IndexOf("已存在的字段", StringComparison.OrdinalIgnoreCase) < 0
+                    && m.IndexOf("already exists", StringComparison.OrdinalIgnoreCase) < 0
+                    && m.IndexOf("duplicate column", StringComparison.OrdinalIgnoreCase) < 0
+                    && m.IndexOf("PRIMARY KEY", StringComparison.OrdinalIgnoreCase) < 0
+                    && m.IndexOf("重复键", StringComparison.OrdinalIgnoreCase) < 0;
+            }).ToList();
+        }
+
         /// <summary>
         /// 
         /// </summary>
