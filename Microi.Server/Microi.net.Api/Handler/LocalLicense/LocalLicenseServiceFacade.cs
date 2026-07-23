@@ -1,20 +1,19 @@
-extern alias MicroiLicense;
+extern alias MicroiLocalLicense;
 using Dos.Common;
-using LicSvc = MicroiLicense::Microi.License.LicenseService;
-using LicenseVerifyResult = MicroiLicense::Microi.License.LicenseVerifyResult;
-using LicensePayload = MicroiLicense::Microi.License.LicensePayload;
+using LicSvc = MicroiLocalLicense::Microi.LocalLicense.LocalLicenseService;
+using LocalLicenseVerifyResult = MicroiLocalLicense::Microi.LocalLicense.LocalLicenseVerifyResult;
 using System;
 using System.Threading.Tasks;
 
-namespace Microi.net.Api
+namespace Microi.net.Api.LocalLicense
 {
     /// <summary>
-    /// License 服务桥接类 - 委托给 Microi.License.LicenseService
+    /// License 服务桥接类 - 委托给 Microi.LocalLicense.LocalLicenseService
     /// </summary>
-    public static class LicenseService
+    public static class LocalLicenseServiceFacade
     {
         public static string GetHardwareId() => LicSvc.GetHardwareId();
-        public static LicenseVerifyResult Verify() => LicSvc.Verify();
+        public static LocalLicenseVerifyResult Verify() => LicSvc.Verify();
         public static object GetDiagnostics() => LicSvc.GetDiagnostics();
         public static DosResult WriteLicenseFile(string c) => LicSvc.WriteLicenseFile(c);
         public static void SetGracePeriodMode(bool e) => LicSvc.SetGracePeriodMode(e);

@@ -1,6 +1,6 @@
-# License 初始化配置
+# 本地附加授权初始化配置
 
-> **适用场景**：首次部署 Microi 平台时需要生成 RSA 密钥对并配置公钥/私钥。
+> **适用场景**：首次部署项目自定义的 `Microi.LocalLicense` 时生成 RSA 密钥对并配置公钥/私钥。本文不配置框架授权 `/api/License/*`。
 > 
 > **⚠️ 警告**：密钥对只生成一次！更换公钥会导致所有历史 License 文件无法验证。
 
@@ -8,10 +8,10 @@
 
 ## 步骤 1：生成 RSA 密钥对
 
-调用管理接口（**仅在 License 服务器上执行一次**）：
+调用管理接口（**仅在本地授权中心执行一次**）：
 
 ```
-GET /api/License/GenerateKeyPair
+GET /api/LocalLicense/GenerateKeyPair
 ```
 
 需要 **超级管理员** 身份。输出示例：
@@ -29,7 +29,7 @@ GET /api/License/GenerateKeyPair
 
 ### 方式 A：替换代码常量（推荐）
 
-在 `Microi.Server/Microi.License/LicenseService.cs` 第 32 行替换：
+在 `Microi.Server/Microi.LocalLicense/LocalLicenseService.cs` 中替换：
 
 ```csharp
 // 替换前
@@ -45,38 +45,42 @@ private const string DefaultPublicKeyBase64 = "MIIBIjANBgkqhkiG9w0B...";
 
 ```bash
 # Linux
-export MICROI_LICENSE_PUBLIC_KEY="MIIBIjANBgkqhkiG9w0B..."
+export MICROI_LOCAL_LICENSE_PUBLIC_KEY="MIIBIjANBgkqhkiG9w0B..."
 
 # Windows PowerShell
-$env:MICROI_LICENSE_PUBLIC_KEY = "MIIBIjANBgkqhkiG9w0B..."
+$env:MICROI_LOCAL_LICENSE_PUBLIC_KEY = "MIIBIjANBgkqhkiG9w0B..."
 
 # Docker Compose
 environment:
-  - MICROI_LICENSE_PUBLIC_KEY=MIIBIjANBgkqhkiG9w0B...
+  - MICROI_LOCAL_LICENSE_PUBLIC_KEY=MIIBIjANBgkqhkiG9w0B...
 ```
 
-## 步骤 3：配置私钥（仅 License 服务器）
+也可以将公钥保存为应用目录下的 `local-license-public.pem`。
+
+## 步骤 3：配置私钥（仅本地授权中心）
 
 **不要将私钥写入代码。** 通过环境变量配置：
 
 ```bash
 # Linux
-export MICROI_LICENSE_PRIVATE_KEY="MIIEvQIBADANBgkqhkiG9w0B..."
+export MICROI_LOCAL_LICENSE_PRIVATE_KEY="MIIEvQIBADANBgkqhkiG9w0B..."
 
 # Windows PowerShell
-$env:MICROI_LICENSE_PRIVATE_KEY = "MIIEvQIBADANBgkqhkiG9w0B..."
+$env:MICROI_LOCAL_LICENSE_PRIVATE_KEY = "MIIEvQIBADANBgkqhkiG9w0B..."
 
 # Docker Compose
 environment:
-  - MICROI_LICENSE_PRIVATE_KEY=MIIEvQIBADANBgkqhkiG9w0B...
+  - MICROI_LOCAL_LICENSE_PRIVATE_KEY=MIIEvQIBADANBgkqhkiG9w0B...
 ```
 
-## 步骤 4：签发第一个 License
+也可以将私钥保存为应用目录下的 `local-license-private.pem`，但生产环境优先使用密钥管理服务或环境变量。
+
+## 步骤 4：签发第一个本地授权
 
 部署完成后，通过管理页面或 API 签发 License：
 
 ```json
-POST /api/License/Issue
+POST /api/LocalLicense/Issue
 {
   "HID": "A1B2C3D4E5F6...",
   "Company": "示例公司",
@@ -94,13 +98,15 @@ POST /api/License/Issue
 ```json
 {
   "AppSettings": {
-    "LicenseHeartbeatUrl": "https://your-license-server.com/api/License/Heartbeat",
-    "LicenseContactEmail": "admin@yourcompany.com"
+    "LocalLicenseHeartbeatUrl": "https://your-license-server.com/api/LocalLicense/Heartbeat",
+    "LocalLicenseContactEmail": "admin@yourcompany.com",
+    "LocalLicenseDbType": "SqlServer",
+    "LocalLicenseDbConn": "Server=db;Database=microi_local_license;User Id=local_license_user;Password=***;TrustServerCertificate=true;"
   }
 }
 ```
 
-默认值为 `https://api.itdos.com/api/License/Heartbeat` 和 `license@microi.net`。
+默认值为 `https://api.itdos.com/api/LocalLicense/Heartbeat` 和 `license@microi.net`。授权中心必须配置独立的 `LocalLicenseDbConn`，不得回退到 `OsClientDbConn`。
 
 ## 硬件指纹（HID）固定（Docker/K8s）
 
@@ -118,7 +124,7 @@ environment:
 `CheckGracePeriod()` 检测到以下情况时，**自动授予 7 天初始宽限期**：
 - 数据库已就绪
 - 无 `ValidProof` 记录（从未有过 License）
-- 无 `.lic_grace` 文件（从未进入过宽限期）
+- 无 `.local_lic_grace` 文件（从未进入过宽限期）
 
 日志输出：
 ```
@@ -129,6 +135,10 @@ Microi：【🆕License引导】首次部署，自动授予 7 天初始宽限期
 此机制确保开发者首次部署时能正常启动系统，有足够时间完成密钥配置。
 
 ---
+
+## 旧配置兼容说明
+
+现行配置统一使用 `LocalLicense*` 和 `MICROI_LOCAL_LICENSE_*`。旧 `License*`、`MICROI_LICENSE_*`、`license.json`、`license-*.pem`、`.lic_*` 仅作为迁移期只读回退；新部署不得继续使用旧名称。兼容逻辑不得访问或修改框架主库 `diy_license`。
 
 ## 业务底座独立管理员（BizAdmin）
 

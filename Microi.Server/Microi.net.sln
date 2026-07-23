@@ -42,7 +42,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Microi.Upgrade", "Microi.Up
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Microi.MongoDB", "Microi.MongoDB\Microi.MongoDB.csproj", "{9E047B5C-AA3B-4FD3-9A0A-7CED9A3E169F}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Microi.License", "Microi.License\Microi.License.csproj", "{C5D6E7F8-A9B0-4C1D-8E2F-3A4B5C6D7E8F}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Microi.LocalLicense", "Microi.LocalLicense\Microi.LocalLicense.csproj", "{C5D6E7F8-A9B0-4C1D-8E2F-3A4B5C6D7E8F}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Plugins", "Plugins", "{07D57EEB-2F50-60C4-C011-FE4FA775C9A8}"
 EndProject

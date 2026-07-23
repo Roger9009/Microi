@@ -441,17 +441,31 @@ export const asyncRoutes = [
             }
         ]
     },
-    // License 授权总控台（管理员）
+    // 本地 License 授权管理
     {
-        path: "/license-admin",
+        path: "/local-license",
         component: Layout,
         hidden: true,
         children: [
             {
-                path: "/license-admin",
-                name: "license_admin_console",
-                component: () => import("@/views/system/LicenseAdminConsole.vue"),
-                meta: { title: "授权总控台" }
+                path: "/local-license",
+                name: "system_local_license",
+                component: () => import("@/views/system/local-license.vue"),
+                meta: { title: "本地授权管理" }
+            }
+        ]
+    },
+    // 本地 License 授权总控台（管理员）
+    {
+        path: "/local-license-admin",
+        component: Layout,
+        hidden: true,
+        children: [
+            {
+                path: "/local-license-admin",
+                name: "local_license_admin_console",
+                component: () => import("@/views/system/LocalLicenseAdminConsole.vue"),
+                meta: { title: "本地授权总控台" }
             }
         ]
     },

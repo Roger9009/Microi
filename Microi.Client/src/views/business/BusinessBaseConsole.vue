@@ -322,7 +322,7 @@ export default {
                 { path: "/business/doc/list", label: "文档管理", icon: "Document", color: "#409eff" },
                 { path: "/business/schema", label: "表结构管理", icon: "Grid", color: "#67c23a" },
                 { path: "/business/monitor", label: "模块监控", icon: "Monitor", color: "#e6a23c" },
-                { path: "/license-admin", label: "License 总控台", icon: "Setting", color: "#f56c6c" }
+                { path: "/local-license-admin", label: "本地 License 总控台", icon: "Setting", color: "#f56c6c" }
             ],
             // 插件启停确认弹窗
             confirmDialog: { visible: false, title: "", message: "", action: "", key: "", confirmType: "primary", confirmText: "确认", loading: false },

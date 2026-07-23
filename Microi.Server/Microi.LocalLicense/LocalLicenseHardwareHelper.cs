@@ -6,7 +6,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 
-namespace Microi.License
+namespace Microi.LocalLicense
 {
     /// <summary>
     /// 跨平台硬件指纹采集工具
@@ -18,7 +18,7 @@ namespace Microi.License
     ///   4. 拼接首个有效网卡的 MAC 地址
     ///   5. SHA256(machineId + ":" + mac) → 64位大写十六进制字符串
     /// </summary>
-    public static class HardwareHelper
+    public static class LocalLicenseHardwareHelper
     {
         private static string _cachedHid = null;
         private static readonly object _lock = new object();

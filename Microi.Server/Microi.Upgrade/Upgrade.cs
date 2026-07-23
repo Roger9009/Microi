@@ -378,28 +378,6 @@ namespace Microi.net
             }
             #endregion
 
-            #region 升级14 --2026-06-21【必须】创建diy_license授权管理表
-            if (NeedUpgrade(CurrentVersion, UpgradeLicense.Version))
-            {
-                try
-                {
-                    var msgs = FilterRealUpgradeErrors(await new UpgradeLicense().Run(osClientSecret.OsClient));
-                    foreach (var msg in msgs)
-                        Console.WriteLine($"Microi：【Error异常】平台自动升级【{osClientSecret.OsClient}】【升级14 - 2026-06-21 创建diy_license表】失败：{msg}");
-                    if (msgs.Count == 0)
-                    {
-                        Console.WriteLine($"Microi：【成功】平台自动升级【{osClientSecret.OsClient}】【升级14 - 2026-06-21 创建diy_license表】成功！");
-                        needUptServerVersion = true;
-                        uptVersion = UpgradeLicense.Version;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"Microi：【Error异常】平台自动升级【{osClientSecret.OsClient}】【升级14 - 2026-06-21 创建diy_license表】失败：{ex.Message}");
-                }
-            }
-            #endregion
-
             #region 更新版本号【必须】
             try
             {

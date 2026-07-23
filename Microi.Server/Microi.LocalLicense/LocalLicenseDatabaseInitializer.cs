@@ -5,13 +5,13 @@ using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 
-namespace Microi.License
+namespace Microi.LocalLicense
 {
     /// <summary>
     /// 授权中心独立数据库初始化器。
     /// 仅创建 License 业务表，不依赖 Microi 框架库的 diy_table/diy_field 元数据。
     /// </summary>
-    internal static class LicenseDatabaseInitializer
+    internal static class LocalLicenseDatabaseInitializer
     {
         private static readonly object SyncRoot = new object();
         private static string _initializedConnection;
@@ -41,7 +41,7 @@ namespace Microi.License
                 };
                 var ddl = MicroiEngine.ORM(dbInfo.DbType);
 
-                EnsureTable(ddl, client, dbInfo, "diy_license", new[]
+                EnsureTable(ddl, client, dbInfo, "diy_local_license", new[]
                 {
                     Col("HID", "varchar(128)"),
                     Col("Company", "varchar(200)"),
@@ -57,10 +57,10 @@ namespace Microi.License
                     Col("RejectReason", "varchar(500)"),
                     Col("Remark", "varchar(1000)")
                 });
-                EnsureIndex(ddl, client, dbInfo, "diy_license", "idx_diy_license_hid", "HID", true);
-                EnsureIndex(ddl, client, dbInfo, "diy_license", "idx_diy_license_status", "Status", false);
+                EnsureIndex(ddl, client, dbInfo, "diy_local_license", "idx_diy_local_license_hid", "HID", true);
+                EnsureIndex(ddl, client, dbInfo, "diy_local_license", "idx_diy_local_license_status", "Status", false);
 
-                EnsureTable(ddl, client, dbInfo, "diy_license_log", new[]
+                EnsureTable(ddl, client, dbInfo, "diy_local_license_log", new[]
                 {
                     Col("HID", "varchar(128)"),
                     Col("Action", "varchar(20)"),
@@ -68,10 +68,45 @@ namespace Microi.License
                     Col("OperatorIP", "varchar(100)"),
                     Col("Detail", "varchar(1000)")
                 });
-                EnsureIndex(ddl, client, dbInfo, "diy_license_log", "idx_diy_license_log_hid", "HID", false);
-                EnsureIndex(ddl, client, dbInfo, "diy_license_log", "idx_diy_license_log_time", "CreateTime", false);
+                EnsureIndex(ddl, client, dbInfo, "diy_local_license_log", "idx_diy_local_license_log_hid", "HID", false);
+                EnsureIndex(ddl, client, dbInfo, "diy_local_license_log", "idx_diy_local_license_log_time", "CreateTime", false);
 
+                MigrateLegacyData(db);
                 _initializedConnection = connectionString;
+            }
+        }
+
+        /// <summary>
+        /// 仅在 LocalLicenseDbConn 指向的独立库内复制旧表数据。
+        /// 不删除、不更新旧表，更不会访问框架主库。
+        /// </summary>
+        private static void MigrateLegacyData(DbSession db)
+        {
+            if (db.TableExists("diy_license"))
+            {
+                db.FromSql(@"
+                    INSERT INTO diy_local_license
+                        (Id,HID,Company,Name,Phone,IP,ProductType,Status,LicenseContent,IssuedAt,
+                         ExpirationDate,UpdateExpirationDate,RejectReason,Remark,CreateTime,UpdateTime)
+                    SELECT o.Id,o.HID,o.Company,o.Name,o.Phone,o.IP,o.ProductType,o.Status,o.LicenseContent,o.IssuedAt,
+                           o.ExpirationDate,o.UpdateExpirationDate,o.RejectReason,o.Remark,o.CreateTime,o.UpdateTime
+                    FROM diy_license o
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM diy_local_license n
+                        WHERE n.Id=o.Id OR n.HID=o.HID
+                    )").ExecuteNonQuery();
+            }
+
+            if (db.TableExists("diy_license_log"))
+            {
+                db.FromSql(@"
+                    INSERT INTO diy_local_license_log
+                        (Id,HID,Action,Operator,OperatorIP,Detail,CreateTime,UpdateTime)
+                    SELECT o.Id,o.HID,o.Action,o.Operator,o.OperatorIP,o.Detail,o.CreateTime,o.UpdateTime
+                    FROM diy_license_log o
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM diy_local_license_log n WHERE n.Id=o.Id
+                    )").ExecuteNonQuery();
             }
         }
 

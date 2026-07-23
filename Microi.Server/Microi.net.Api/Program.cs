@@ -6,6 +6,7 @@ using System.Diagnostics;
 using Dos.Common;
 using Microi.net;
 using Microi.net.Api;
+using Microi.net.Api.LocalLicense;
 // using Microi.net.Business; // TODO: 待 Microi.net NuGet 包包含 Business 命名空间后取消注释
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
@@ -114,7 +115,7 @@ catch (Exception ex)
 Console.WriteLine($"Microi：【✅成功】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】您的平台服务器端版本号：v{microiNetDllVersion}");
 // ORM 引擎：Dos.ORM
 services.AddMicroi();//【必须】Microi初始化
-services.AddHostedService<LicenseBackgroundService>();// License 后台心跳验证
+services.AddHostedService<LocalLicenseBackgroundService>();// 本地附加授权后台心跳验证
 services.AddMicroiORM();//【必须】注入【数据库ORM】插件
 services.AddMicroiCache();//【必须】注入【分布式缓存】插件
 services.AddMicroiHttp();//【必须】注入【Http】插件
@@ -427,12 +428,12 @@ if (clientModel.OsClientModel["EnableSwagger"].Val<int>() == 1)
                 Console.WriteLine($"Microi：【❌Error】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】接口引擎初始化失败：{ex.Message}");
             }
 
-            // License 持久化：验证通过时写有效证明，宽限期写起始时间
-            var cachedVerify = LicenseService.Verify();
+            // 本地附加授权持久化：验证通过时写有效证明，宽限期写起始时间
+            var cachedVerify = LocalLicenseServiceFacade.Verify();
             if (cachedVerify.Valid && cachedVerify.ExpirationDate.HasValue)
-                LicenseService.WriteValidProof(cachedVerify.ExpirationDate.Value);
+                LocalLicenseServiceFacade.WriteValidProof(cachedVerify.ExpirationDate.Value);
             else
-                LicenseService.PersistGracePeriodToDb();
+                LocalLicenseServiceFacade.PersistGracePeriodToDb();
 
             // AI 引擎 Schema 缓存初始化
             try
@@ -455,51 +456,50 @@ if (clientModel.OsClientModel["EnableSwagger"].Val<int>() == 1)
 }
 #endregion
 
-#region License 验证
+#region 本地附加授权验证
 try
 {
     // ── 开源版模式：公钥未配置时，跳过 License 校验，系统正常启动 ──
     //    README 明确：开源版免费、可商用、随意修改、无限分发部署
     //    仅在线 AI 相关高级功能受限，本地 AI 不受影响
-    if (LicenseService.IsOpenSourceMode())
+    if (LocalLicenseServiceFacade.IsOpenSourceMode())
     {
-        LicenseService.SetGracePeriodMode(true);
-        Console.WriteLine($"Microi：【✅开源版】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】未配置自定义公钥，以开源版模式运行。License校验已跳过。");
-        Console.WriteLine($"Microi：【✅开源版】如需启用完整 License 功能，请生成密钥对并替换 DefaultPublicKeyBase64。");
-        Console.WriteLine($"Microi：【✅开源版】当前服务器HID：{LicenseService.GetHardwareId()}");
+        LocalLicenseServiceFacade.SetGracePeriodMode(true);
+        Console.WriteLine($"Microi：【✅本地附加授权开源模式】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】未配置自定义公钥，本地附加授权校验已跳过。");
+        Console.WriteLine($"Microi：【✅本地附加授权开源模式】如需启用完整功能，请生成密钥对并替换 DefaultPublicKeyBase64。");
+        Console.WriteLine($"Microi：【✅本地附加授权开源模式】当前服务器HID：{LocalLicenseServiceFacade.GetHardwareId()}");
     }
     else
     {
-        LicenseService.LoadHeartbeatStatus();   // 还原上次心跳记录的吊销状态
-        var licenseResult = LicenseService.Verify();
+        LocalLicenseServiceFacade.LoadHeartbeatStatus();   // 还原上次心跳记录的吊销状态
+        var licenseResult = LocalLicenseServiceFacade.Verify();
         if (licenseResult.Valid)
         {
             // 即使本地 RSA 验证通过，也检查上次心跳是否记录了服务端吊销
-            if (LicenseService.IsRevokedByServer)
+            if (LocalLicenseServiceFacade.IsRevokedByServer)
             {
-                Console.WriteLine($"Microi：【❌License】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】License已被官方服务器吊销，系统拒绝启动。请联系官方：https://microi.net");
+                Console.WriteLine($"Microi：【❌本地附加授权】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】授权已被服务器吊销，系统拒绝启动。");
                 Environment.Exit(1);
             }
-            var (overOffline, offlineDays) = LicenseService.CheckOfflineDays();
+            var (overOffline, offlineDays) = LocalLicenseServiceFacade.CheckOfflineDays();
             if (overOffline)
-                Console.WriteLine($"Microi：【⚠️License】已离线 {offlineDays} 天，超过限制 {LicenseService.OfflineGraceDays} 天，建议检查网络连接以完成联网验证");
-            Console.WriteLine($"Microi：【✅License】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】License验证通过！{licenseResult.Message}（{licenseResult.ProductType} | {licenseResult.Company}）");
+                Console.WriteLine($"Microi：【⚠️本地附加授权】已离线 {offlineDays} 天，超过限制 {LocalLicenseServiceFacade.OfflineGraceDays} 天，建议检查网络连接以完成联网验证");
+            Console.WriteLine($"Microi：【✅本地附加授权】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】验证通过！{licenseResult.Message}（{licenseResult.ProductType} | {licenseResult.Company}）");
         }
         else
         {
-            var (graceAllowed, graceDaysLeft) = LicenseService.CheckGracePeriod();
+            var (graceAllowed, graceDaysLeft) = LocalLicenseServiceFacade.CheckGracePeriod();
             if (graceAllowed)
             {
-                LicenseService.SetGracePeriodMode(true);
-                Console.WriteLine($"Microi：【⚠️License】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】License验证未通过，进入宽限期模式（剩余 {graceDaysLeft} 天）。原因：{licenseResult.Message}");
-                Console.WriteLine($"Microi：【⚠️License】当前服务器HID：{LicenseService.GetHardwareId()}");
-                Console.WriteLine($"Microi：【⚠️License】请访问 /api/License/GetHardwareId 获取HID，并联系官方申请授权：https://microi.net");
+                LocalLicenseServiceFacade.SetGracePeriodMode(true);
+                Console.WriteLine($"Microi：【⚠️本地附加授权】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】验证未通过，进入宽限期模式（剩余 {graceDaysLeft} 天）。原因：{licenseResult.Message}");
+                Console.WriteLine($"Microi：【⚠️本地附加授权】当前服务器HID：{LocalLicenseServiceFacade.GetHardwareId()}");
+                Console.WriteLine($"Microi：【⚠️本地附加授权】请访问 /api/LocalLicense/GetHardwareId 获取HID并申请授权。");
             }
             else
             {
-                Console.WriteLine($"Microi：【❌License】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】License宽限期已过，系统拒绝启动。原因：{licenseResult.Message}");
-                Console.WriteLine($"Microi：【❌License】当前服务器HID：{LicenseService.GetHardwareId()}");
-                Console.WriteLine($"Microi：【❌License】请联系官方获取正版License：https://microi.net");
+                Console.WriteLine($"Microi：【❌本地附加授权】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】宽限期已过，系统拒绝启动。原因：{licenseResult.Message}");
+                Console.WriteLine($"Microi：【❌本地附加授权】当前服务器HID：{LocalLicenseServiceFacade.GetHardwareId()}");
                 Environment.Exit(1);
             }
         }
@@ -507,8 +507,8 @@ try
 }
 catch (Exception ex)
 {
-    Console.WriteLine($"Microi：【⚠️License】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】License验证异常（宽限期运行）：{ex.Message}");
-    LicenseService.SetGracePeriodMode(true);
+    Console.WriteLine($"Microi：【⚠️本地附加授权】【{DateTime.Now:yyyy-MM-dd HH:mm:ss}】验证异常（宽限期运行）：{ex.Message}");
+    LocalLicenseServiceFacade.SetGracePeriodMode(true);
 }
 #endregion
 

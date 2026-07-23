@@ -84,8 +84,8 @@
     <ProjectReference Include="../Dos.Common/Dos.Common.csproj" />
     <ProjectReference Include="../Dos.ORM/Dos.ORM.csproj" />
     <ProjectReference Include="../Microi.Core/Microi.Core.csproj" />
-    <ProjectReference Include="../Microi.License/Microi.License.csproj">
-      <Aliases>MicroiLicense</Aliases>
+    <ProjectReference Include="../Microi.LocalLicense/Microi.LocalLicense.csproj">
+      <Aliases>MicroiLocalLicense</Aliases>
     </ProjectReference>
     <ProjectReference Include="../Microi.MongoDB/Microi.MongoDB.csproj" />
   </ItemGroup>

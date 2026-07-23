@@ -3,9 +3,11 @@
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
     <OutputType>Library</OutputType>
+    <AssemblyName>Microi.LocalLicense</AssemblyName>
+    <RootNamespace>Microi.LocalLicense</RootNamespace>
     <Authors>Microi</Authors>
     <Company>www.microi.net</Company>
-    <Description>开源低代码平台-Microi吾码，License授权管理模块。官网：https://microi.net</Description>
+    <Description>开源低代码平台-Microi吾码，本地自定义授权管理模块。官网：https://microi.net</Description>
     <Copyright>Copyright 2009-2026 microi.net</Copyright>
     <PackageProjectUrl>https://www.microi.net</PackageProjectUrl>
     <PackageTags>低代码,LowCode,License,授权,Microi吾码,Microi,Microi.net,iTdos</PackageTags>

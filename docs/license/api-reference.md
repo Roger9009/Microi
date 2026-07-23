@@ -1,6 +1,8 @@
-# License API 参考
+# 本地附加授权 API 参考
 
-> **适用读者**：开发者 | **基础路径**：`/api/License/`
+> **适用读者**：开发者 | **基础路径**：`/api/LocalLicense/`
+>
+> 本文只描述 `LocalLicenseController`。框架 `/api/License/*` 保持原样，不属于本地附加授权，也不得按本文改名。
 
 ---
 
@@ -10,26 +12,26 @@
 
 | 方法 | 端点 | 鉴权 | 说明 |
 |------|------|------|------|
-| GET | `/api/License/GetHardwareId` | 匿名 | 获取当前服务器 HID |
-| GET | `/api/License/Verify` | 匿名 | 验证本地 License 状态 |
-| GET | `/api/License/GetConfig` | 匿名 | 获取可配置项（ContactEmail、HeartbeatIntervalHours 等） |
-| GET/POST | `/api/License/GetStatus` | 匿名 | 获取 License 运行状态摘要（含心跳/宽限期/吊销信息） |
-| GET/POST | `/api/License/GetHeartbeatStatus` | 匿名 | 获取 License 心跳状态（不触发 Verify） |
-| POST | `/api/License/Heartbeat` | 匿名 | 授权中心接收客户心跳，返回 Ok/Revoked/Expired 等状态 |
-| POST | `/api/License/WriteLicenseFile` | 匿名 | 写入 License 文件到磁盘 |
-| POST | `/api/License/GenerateRegistrationFile` | 匿名 | 生成离线注册申请包 |
-| GET/POST | `/api/License/Diagnostics` | 登录 | 获取完整诊断信息 |
-| POST | `/api/License/Check` | 匿名 | 查询某个 HID 的 License 状态 |
-| POST | `/api/License/QueryApplication` | 匿名 | 查询申请状态 |
+| GET | `/api/LocalLicense/GetHardwareId` | 匿名 | 获取当前服务器 HID |
+| GET | `/api/LocalLicense/Verify` | 匿名 | 验证本地附加授权状态 |
+| GET | `/api/LocalLicense/GetConfig` | 匿名 | 获取可配置项（ContactEmail、HeartbeatIntervalHours 等） |
+| GET/POST | `/api/LocalLicense/GetStatus` | 匿名 | 获取运行状态摘要（含心跳/宽限期/吊销信息） |
+| GET/POST | `/api/LocalLicense/GetHeartbeatStatus` | 匿名 | 获取心跳状态（不触发 Verify） |
+| POST | `/api/LocalLicense/Heartbeat` | 匿名 | 授权中心接收客户心跳，返回 Ok/Revoked/Expired 等状态 |
+| POST | `/api/LocalLicense/WriteLicenseFile` | 匿名 | 写入 `local-license.json` |
+| POST | `/api/LocalLicense/GenerateRegistrationFile` | 匿名 | 生成离线注册申请包 |
+| GET/POST | `/api/LocalLicense/Diagnostics` | 登录 | 获取完整诊断信息 |
+| POST | `/api/LocalLicense/Check` | 匿名 | 查询某个 HID 的本地授权状态 |
+| POST | `/api/LocalLicense/QueryApplication` | 匿名 | 查询申请状态 |
 
-### GET /api/License/GetHardwareId
+### GET /api/LocalLicense/GetHardwareId
 
 ```json
 // Response
 { "Code": 1, "Data": { "HID": "A1B2C3D4E5F6..." } }
 ```
 
-### GET /api/License/Verify
+### GET /api/LocalLicense/Verify
 
 ```json
 // Response
@@ -50,7 +52,7 @@
 }
 ```
 
-### POST /api/License/WriteLicenseFile
+### POST /api/LocalLicense/WriteLicenseFile
 
 ```json
 // Request
@@ -62,7 +64,7 @@
 
 写入前自动执行：AES 解密（若加密）→ JSON 解析 → RSA 签名验证 → HID 匹配检查 → 到期检查。
 
-### POST /api/License/GenerateRegistrationFile
+### POST /api/LocalLicense/GenerateRegistrationFile
 
 ```json
 // Request
@@ -75,22 +77,22 @@
 }
 ```
 
-## License 服务器端点（超级管理员）
+## 本地授权中心端点（超级管理员）
 
-这些端点在 **License 服务器（有私钥）** 上可用，需要超级管理员权限。
+这些端点在**本地授权中心（有私钥）**上可用，需要超级管理员权限。
 
 | 方法 | 端点 | 说明 |
 |------|------|------|
-| POST | `/api/License/Apply` | 提交授权申请（含验证码） |
-| POST | `/api/License/Issue` | 直接签发 License |
-| POST | `/api/License/Approve` | 审批通过并签发 |
-| POST | `/api/License/Reject` | 驳回申请 |
-| POST | `/api/License/Revoke` | 吊销/恢复 License |
-| GET | `/api/License/GenerateKeyPair` | 生成 RSA 密钥对 |
-| GET | `/api/License/List` | License 列表（支持 ?status= 筛选） |
-| GET | `/api/License/Logs` | 操作日志（支持 ?hid= 筛选） |
+| POST | `/api/LocalLicense/Apply` | 提交授权申请（含验证码） |
+| POST | `/api/LocalLicense/Issue` | 直接签发本地授权 |
+| POST | `/api/LocalLicense/Approve` | 审批通过并签发 |
+| POST | `/api/LocalLicense/Reject` | 驳回申请 |
+| POST | `/api/LocalLicense/Revoke` | 吊销/恢复本地授权 |
+| GET | `/api/LocalLicense/GenerateKeyPair` | 生成 RSA 密钥对 |
+| GET | `/api/LocalLicense/List` | 本地授权列表（支持 ?status= 筛选） |
+| GET | `/api/LocalLicense/Logs` | 操作日志（支持 ?hid= 筛选） |
 
-### POST /api/License/Issue
+### POST /api/LocalLicense/Issue
 
 ```json
 // Request
@@ -104,7 +106,7 @@
 }
 ```
 
-### POST /api/License/Revoke
+### POST /api/LocalLicense/Revoke
 
 ```json
 // Request
@@ -129,24 +131,24 @@
 
 ## 前端 API 客户端
 
-在 `Microi.Client/src/utils/business-base.js` 中提供 `LicenseApi`：
+在 `Microi.Client/src/utils/business-base.js` 中提供 `LocalLicenseApi`：
 
 ```javascript
-import { LicenseApi } from '@/utils/business-base';
+import { LocalLicenseApi } from '@/utils/business-base';
 
 // 本地端点
-const hid = await LicenseApi.getHardwareId();
-const status = await LicenseApi.verify();
-const diag = await LicenseApi.diagnostics();
+const hid = await LocalLicenseApi.getHardwareId();
+const status = await LocalLicenseApi.verify();
+const diag = await LocalLicenseApi.diagnostics();
 
-// License 服务器端点
-const result = await LicenseApi.apply(hid, company, name, phone, ...);
-const result = await LicenseApi.issue(hid, company, ...);
-const result = await LicenseApi.approve(hid);
-const result = await LicenseApi.revoke(hid);
+// 本地附加授权中心端点
+const result = await LocalLicenseApi.apply(hid, company, name, phone, ...);
+const result = await LocalLicenseApi.issue(hid, company, ...);
+const result = await LocalLicenseApi.approve(hid);
+const result = await LocalLicenseApi.revoke(hid);
 ```
 
-## License 文件格式
+## `local-license.json` 文件格式
 
 ```json
 {
@@ -169,3 +171,7 @@ const result = await LicenseApi.revoke(hid);
 |------------|:-------:|:------:|:--------:|:----------:|
 | `Personal` | ❌ | ❌ | ✅ | ✅ |
 | `Enterprise` | ✅ | ✅ | ✅ | ✅ |
+
+## 名称和数据边界
+
+现行配置、文件和表分别使用 `LocalLicense*` / `MICROI_LOCAL_LICENSE_*`、`local-license.json` / `local-license-*.pem` / `.local_lic_*`、`diy_local_license` / `diy_local_license_log`。旧 `License*`、`MICROI_LICENSE_*`、`license.json`、`license-*.pem`、`.lic_*`、`diy_license*` 只用于安全兼容迁移；旧表迁移仅限独立 `LocalLicenseDbConn`，绝不修改框架主库 `diy_license`。

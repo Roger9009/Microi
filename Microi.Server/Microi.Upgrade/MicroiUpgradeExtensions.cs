@@ -65,8 +65,8 @@ namespace Microi.net
                             var dbConn = clientModelItem.Value.OsClientModel?["DbConn"]?.ToString();
                             if (string.IsNullOrWhiteSpace(dbConn)) { Console.WriteLine($"Microi：【⚠️】跳过无 DB 租户 [{clientModelItem.Value.OsClient}]"); continue; }
 
-                            // diy_lang / diy_license 物理表已由 CoreTableInitializer（底座 AddDiyTable/AddColumn）创建；
-                            // 多语言数据与接口种子由后续 Upgrade() 脚本写入。
+                            // 核心物理表由 CoreTableInitializer 创建；本地自定义授权表只允许在
+                            // LocalLicenseDbConn 独立库内初始化，主库升级流程不得创建。
 
                             try
                             {

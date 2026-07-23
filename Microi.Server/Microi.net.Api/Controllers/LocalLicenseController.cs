@@ -1,0 +1,691 @@
+using Dos.Common;
+using Lazy.Captcha.Core;
+
+using Microi.net;
+
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Cors;
+using Microsoft.AspNetCore.Mvc;
+using System;
+
+namespace Microi.net.Api.LocalLicense
+{
+    /// <summary>
+    /// License授权管理
+    /// 
+    /// 同一套代码部署在两种服务器上�?
+    /// - License服务器（有私钥）：Apply/Issue/Check/Revoke 等数据库操作可用
+    /// - 客户服务器（无私钥）：仅 GetHardwareId/Verify/WriteLicenseFile/Diagnostics 可用
+    /// </summary>
+    [EnableCors("any")]
+    [ServiceFilter(typeof(DiyFilter<dynamic>))]
+    [Route("api/LocalLicense/[action]")]
+    public class LocalLicenseController : Controller
+    {
+        private readonly ICaptcha _captcha;
+
+        /// <summary>
+        /// 匿名端点 IP 限流表：每 IP 每分钟最多 10 次请求
+        /// </summary>
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, short> _anonThrottle
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, short>();
+        private static DateTime _throttleResetTime = DateTime.UtcNow;
+
+        public LocalLicenseController(ICaptcha captcha)
+        {
+            _captcha = captcha;
+        }
+
+        /// <summary>
+        /// 匿名端点限流检查：每 IP 每分钟最多 10 次。
+        /// 返回 true 表示放行，false 表示被限流。
+        /// </summary>
+        private bool CheckAnonRateLimit()
+        {
+            // 每分钟重置
+            var now = DateTime.UtcNow;
+            if ((now - _throttleResetTime).TotalMinutes >= 1)
+            {
+                _anonThrottle.Clear();
+                _throttleResetTime = now;
+            }
+            var ip = HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',').FirstOrDefault()?.Trim()
+                ?? HttpContext.Connection.RemoteIpAddress?.ToString()
+                ?? "unknown";
+            var count = _anonThrottle.AddOrUpdate(ip, 1, (_, c) => (short)(c + 1));
+            return count <= 10;
+        }
+
+        /// <summary>
+        /// 获取License申请验证码（匹名可访问）
+        /// </summary>
+        [HttpGet]
+        [AllowAnonymous]
+        public IActionResult GetCaptcha()
+        {
+            try
+            {
+                var captchaId = "local-license:Captcha:" + Guid.NewGuid().ToString("N");
+                var info = _captcha.Generate(captchaId);
+                if (info == null)
+                    return Json(new DosResult(0, null, "获取验证码失败"));
+                return Json(new DosResult(1, new { CaptchaId = info.Id, Image = Convert.ToBase64String(info.Bytes) }));
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "获取验证码失�? " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 客户申请License（提交HID和公司信息，写入diy_local_license表）
+        /// 仅在License服务器（有私钥）上可�?
+        /// 服务器IP自动从请求中获取，无需客户手动填写
+        /// </summary>
+        [HttpPost]
+        [AllowAnonymous]
+        public async Task<JsonResult> Apply([FromBody] LocalLicenseApplyRequest request)
+        {
+            try
+            {
+                // 验证码校验"
+                if (string.IsNullOrWhiteSpace(request?.CaptchaId))
+                    return Json(new DosResult(0, null, "请先获取验证码"));
+                if (string.IsNullOrWhiteSpace(request?.CaptchaValue))
+                    return Json(new DosResult(0, null, "请输入验证码"));
+                if (!_captcha.Validate(request.CaptchaId, request.CaptchaValue, true, true))
+                    return Json(new DosResult(0, null, "验证码错误，请重新输入"));
+
+                // 自动获取客户端IP（优先X-Forwarded-For，适配反向代理/Docker环境）"
+                var clientIP = request?.IP;
+                if (string.IsNullOrWhiteSpace(clientIP))
+                {
+                    clientIP = HttpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault()?.Split(',').FirstOrDefault()?.Trim()
+                        ?? HttpContext.Request.Headers["X-Real-IP"].FirstOrDefault()
+                        ?? HttpContext.Connection.RemoteIpAddress?.MapToIPv4().ToString()
+                        ?? "";
+                }
+
+                var result = await LocalLicenseServiceFacade.ApplyAsync(
+                    request?.HID, request?.Company, request?.Name, request?.Phone,
+                    clientIP, request?.ProductType, request?.ExpirationDate,
+                    request?.UpdateExpirationDate, request?.Remark,
+                    request?.Account, request?.Password);
+                return Json(result);
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "License申请失败: " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 在线签发License（需要私�?+ 管理员权限）
+        /// 仅在License服务器（有私钥）上可�?
+        /// </summary>
+        [HttpPost]
+        public async Task<JsonResult> Issue([FromBody] LocalLicenseIssueRequest request)
+        {
+            // 验证管理员权限（权限检查保留在Controller层）
+            var currentUser = await DiyToken.GetCurrentUser();
+            if (currentUser == null)
+                return Json(new DosResult(0, null, "请先登录"));
+
+            var level = currentUser["Level"].Val<int>();
+            if (level < DiyCommon.MaxRoleLevel)
+                return Json(new DosResult(0, null, "仅超级管理员可签发License"));
+
+            try
+            {
+                var result = await LocalLicenseServiceFacade.IssueAsync(
+                    request?.HID, request?.Company, request?.Name, request?.Phone,
+                    request?.IP, request?.ProductType, request?.ExpirationDate,
+                    request?.UpdateExpirationDate);
+                return Json(result);
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "License签发失败: " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 获取 License 模块的可配置项（匿名可访问）
+        /// 前端通过此接口读取 ContactEmail 等，避免硬编码
+        /// </summary>
+        [HttpGet]
+        [AllowAnonymous]
+        public JsonResult GetConfig()
+        {
+            if (!CheckAnonRateLimit()) return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
+            return Json(new DosResult(1, new
+            {
+                ContactEmail = LocalLicenseServiceFacade.ContactEmail,
+                HeartbeatIntervalHours = LocalLicenseServiceFacade.HeartbeatIntervalHours,
+                OfflineGraceDays = LocalLicenseServiceFacade.OfflineGraceDays
+            }));
+        }
+
+        /// <summary>
+        /// 获取 License 运行状态摘要（轻量，不触发完整 Verify），
+        /// 供前端仪表盘/监控面板快速展示。
+        /// 匿名可访问。
+        /// GET /api/LocalLicense/GetStatus
+        /// </summary>
+        [HttpGet, HttpPost]
+        [AllowAnonymous]
+        public JsonResult GetStatus()
+        {
+            if (!CheckAnonRateLimit()) return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
+            try
+            {
+                var verifyResult = LocalLicenseServiceFacade.Verify();
+                var (graceAllowed, graceDaysLeft) = LocalLicenseServiceFacade.CheckGracePeriod();
+                var (overOffline, offlineDays) = LocalLicenseServiceFacade.CheckOfflineDays();
+
+                return Json(new DosResult(1, new
+                {
+                    IsLicensed = verifyResult.Valid,
+                    IsGracePeriod = LocalLicenseServiceFacade.GetIsGracePeriod(),
+                    IsOpenSource = LocalLicenseServiceFacade.IsOpenSourceMode(),
+                    HID = verifyResult.HID,
+                    Company = verifyResult.Company,
+                    ProductType = verifyResult.ProductType,
+                    ExpirationDate = verifyResult.ExpirationDate?.ToString("yyyy-MM-dd HH:mm:ss"),
+                    DaysRemaining = verifyResult.DaysRemaining,
+                    GraceDaysLeft = graceAllowed ? graceDaysLeft : 0,
+                    IsRevokedByServer = LocalLicenseServiceFacade.GetIsRevokedByServer(),
+                    OfflineDays = offlineDays,
+                    OfflineGraceDays = LocalLicenseServiceFacade.GetOfflineGraceDays()
+                }));
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "获取状态失败: " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 获取 License 心跳状态（不触发 Verify），供前端监控面板展示。
+        /// 匿名可访问。
+        /// GET /api/LocalLicense/GetHeartbeatStatus
+        /// </summary>
+        [HttpGet, HttpPost]
+        [AllowAnonymous]
+        public JsonResult GetHeartbeatStatus()
+        {
+            if (!CheckAnonRateLimit()) return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
+            try
+            {
+                var hbDiag = LocalLicenseServiceFacade.GetHeartbeatDiagnostics();
+                return Json(new DosResult(1, hbDiag));
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "获取心跳状态失败: " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 授权中心接收客户服务器心跳，返回 Ok/Revoked/Expired/Pending/Unknown。
+        /// </summary>
+        [HttpPost]
+        [AllowAnonymous]
+        public async Task<JsonResult> Heartbeat([FromBody] LocalLicenseHeartbeatRequest request)
+        {
+            if (!CheckAnonRateLimit())
+                return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
+            try
+            {
+                return Json(await LocalLicenseServiceFacade.ProcessHeartbeatAsync(request?.HID));
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "心跳处理失败: " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 获取当前服务器的硬件指纹ID（匿名可访问，本地操作）
+        /// </summary>
+        [HttpGet, HttpPost]
+        [AllowAnonymous]
+        public JsonResult GetHardwareId()
+        {
+            if (!CheckAnonRateLimit()) return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
+            try
+            {
+                var hid = LocalLicenseServiceFacade.GetHardwareId();
+                return Json(new DosResult(1, new { HID = hid }));
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "获取HID失败: " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 验证当前服务器的License状态（匿名可访问，本地操作�?
+        /// </summary>
+        [HttpGet, HttpPost]
+        [AllowAnonymous]
+        public JsonResult Verify()
+        {
+            if (!CheckAnonRateLimit()) return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
+            try
+            {
+                var data = LocalLicenseServiceFacade.Verify();
+                return Json(new DosResult(1, data));
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "License验证失败: " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 获取硬件指纹诊断信息（需要登录）
+        /// </summary>
+        [HttpGet, HttpPost]
+        public JsonResult Diagnostics()
+        {
+            try
+            {
+                var diagnostics = LocalLicenseServiceFacade.GetDiagnostics();
+                return Json(new DosResult(1, diagnostics));
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "获取诊断信息失败: " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 查询License状态（根据HID查询是否已签发、是否被作废�?
+        /// 仅查询数据库，不需要私�?
+        /// </summary>
+        [HttpPost]
+        [AllowAnonymous]
+        public async Task<JsonResult> Check([FromBody] LocalLicenseCheckRequest request)
+        {
+            if (!CheckAnonRateLimit()) return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
+            try
+            {
+                var result = await LocalLicenseServiceFacade.CheckAsync(request?.HID);
+                return Json(result);
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "查询License状态失�? " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 查询License申请状态（根据HID查询是否已提交申请及当前状态）
+        /// 不返回LicenseContent，仅返回申请元数据，匿名可访�?
+        /// </summary>
+        [HttpPost]
+        [AllowAnonymous]
+        public async Task<JsonResult> QueryApplication([FromBody] LocalLicenseCheckRequest request)
+        {
+            if (!CheckAnonRateLimit()) return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
+            try
+            {
+                var result = await LocalLicenseServiceFacade.QueryApplicationAsync(request?.HID);
+                return Json(result);
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "查询申请状态失�? " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 将License内容写入当前服务器磁盘（客户前端"自动部署"时调用本地服务器�?
+        /// 写入前会验证License内容的合法性（JSON格式 + RSA签名验签�?
+        /// </summary>
+        [HttpPost]
+        [AllowAnonymous]
+        public JsonResult WriteLicenseFile([FromBody] LocalLicenseWriteLicenseFileRequest request)
+        {
+            if (!CheckAnonRateLimit()) return Json(new DosResult(0, null, "请求过于频繁，请稍后重试"));
+            try
+            {
+                var result = LocalLicenseServiceFacade.WriteLicenseFile(request?.LicenseContent);
+                return Json(result);
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "写入License文件失败: " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 作废或恢复License（仅超级管理员可操作�?
+        /// 仅在License服务器（有私钥）上可�?
+        /// </summary>
+        [HttpPost]
+        public async Task<JsonResult> Revoke([FromBody] LocalLicenseRevokeRequest request)
+        {
+            // 验证管理员权限（权限检查保留在Controller层）
+            var currentUser = await DiyToken.GetCurrentUser();
+            if (currentUser == null)
+                return Json(new DosResult(0, null, "请先登录"));
+
+            var level = currentUser["Level"].Val<int>();
+            if (level < DiyCommon.MaxRoleLevel)
+                return Json(new DosResult(0, null, "仅超级管理员可作废License"));
+
+            try
+            {
+                var result = await LocalLicenseServiceFacade.RevokeAsync(request?.HID, request?.Revoke ?? true);
+                return Json(result);
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "操作失败: " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 审核通过License申请（对Pending状态的申请执行签发�?
+        /// 仅超级管理员可操作，仅在License服务器（有私钥）上可�?
+        /// </summary>
+        [HttpPost]
+        public async Task<JsonResult> Approve([FromBody] LocalLicenseCheckRequest request)
+        {
+            var currentUser = await DiyToken.GetCurrentUser();
+            if (currentUser == null)
+                return Json(new DosResult(0, null, "请先登录"));
+
+            var level = currentUser["Level"].Val<int>();
+            if (level < DiyCommon.MaxRoleLevel)
+                return Json(new DosResult(0, null, "仅超级管理员可审核License"));
+
+            try
+            {
+                var result = await LocalLicenseServiceFacade.ApproveAsync(request?.HID);
+                return Json(result);
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "审核失败: " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 驳回License申请（附驳回原因�?
+        /// 仅超级管理员可操作，仅在License服务器（有私钥）上可�?
+        /// </summary>
+        [HttpPost]
+        public async Task<JsonResult> Reject([FromBody] LocalLicenseRejectRequest request)
+        {
+            var currentUser = await DiyToken.GetCurrentUser();
+            if (currentUser == null)
+                return Json(new DosResult(0, null, "请先登录"));
+
+            var level = currentUser["Level"].Val<int>();
+            if (level < DiyCommon.MaxRoleLevel)
+                return Json(new DosResult(0, null, "仅超级管理员可驳回License"));
+
+            try
+            {
+                var result = await LocalLicenseServiceFacade.RejectAsync(request?.HID, request?.RejectReason);
+                return Json(result);
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "驳回失败: " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 生成离线注册申请文件（纯内网/无法访问 api.itdos.com 时使用）
+        /// 将返回的 JSON 保存为文件发给官方，收到 local-license.json 后通过「手动导入」写�?
+        /// 匿名可访问（因为内网机器可能没有登录态）
+        /// </summary>
+        [HttpPost]
+        [AllowAnonymous]
+        public IActionResult GenerateRegistrationFile([FromBody] LocalLicenseRegistrationRequest request)
+        {
+            try
+            {
+                var result = LocalLicenseServiceFacade.GenerateRegistrationPackage(
+                    request?.Company, request?.Name, request?.Phone,
+                    request?.IP, request?.ProductType, request?.Remark);
+                return Json(result);
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "生成失败: " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 将客户端生成的离线注册文件（.milic）直接提交到 License 服务器，替代邮件发送流程�?
+        /// 解密注册包、验证完整性哈希后写入 Pending 申请记录，等待管理员审核�?
+        /// 匿名可访问（内网上传场景），�?IP+HID 双维�?60 秒限流防滥用�?
+        /// </summary>
+        [HttpPost]
+        public async Task<JsonResult> ImportRegistrationFile([FromBody] LocalLicenseImportRegistrationRequest request)
+        {
+            var currentUser = await DiyToken.GetCurrentUser();
+            if (currentUser == null || currentUser["Level"].Val<int>() < DiyCommon.MaxRoleLevel)
+                return Json(new DosResult(0, null, "仅授权总控台超级管理员可导入注册文件"));
+
+            try
+            {
+                var result = await LocalLicenseServiceFacade.ImportRegistrationFile(
+                    request?.HID, request?.FileContent ?? request?.EncryptedContent);
+                return Json(result);
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "导入失败: " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 生成 RSA 2048 密钥对（License服务器初始化使用，仅超级管理员可调用�?
+        /// 输出：PublicKeyBase64 填入 LocalLicenseService.DefaultPublicKeyBase64
+        ///       PrivateKeyBase64 设为环境变量 MICROI_LOCAL_LICENSE_PRIVATE_KEY
+        /// ⚠️ 密钥只生成一次，生成后务必妥善保管私钥并更新公钥常量
+        /// </summary>
+        [HttpGet]
+        public async Task<JsonResult> GenerateKeyPair()
+        {
+            var currentUser = await DiyToken.GetCurrentUser();
+            if (currentUser == null)
+                return Json(new DosResult(0, null, "请先登录"));
+
+            var level = currentUser["Level"].Val<int>();
+            if (level < DiyCommon.MaxRoleLevel)
+                return Json(new DosResult(0, null, "仅超级管理员可生成密钥对"));
+
+            try
+            {
+                var (pubBase64, prvBase64, pubPem, prvPem) = LocalLicenseServiceFacade.GenerateKeyPair();
+                return Json(new DosResult(1, new
+                {
+                    PublicKeyBase64 = pubBase64,
+                    PrivateKeyBase64 = prvBase64,
+                    PublicKeyPem = pubPem,
+                    PrivateKeyPem = prvPem,
+                    Instructions = new[]
+                    {
+                        "1. 将 PublicKeyBase64 替换 LocalLicenseService.cs 中的 DefaultPublicKeyBase64 常量，然后重新编译部署",
+                        "2. 在 License 服务器设置环境变量：MICROI_LOCAL_LICENSE_PRIVATE_KEY = PrivateKeyBase64",
+                        "3. 私钥只需在 License 服务器上配置，切勿提交到代码仓库",
+                        "4. 密钥对生成一次即可，更换公钥会导致历史 License 文件无法验证"
+                    }
+                }, "密钥对生成成功，请按 Instructions 步骤操作"));
+            }
+            catch (Exception ex)
+            {
+                return Json(new DosResult(0, null, "生成密钥对失败: " + ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// 管理员：获取 License 列表（超级管理员）
+        /// </summary>
+        [HttpGet]
+        public async Task<JsonResult> List([FromQuery] string status = "", [FromQuery] int page = 1, [FromQuery] int pageSize = 20)
+        {
+            var currentUser = await DiyToken.GetCurrentUser();
+            if (currentUser == null || currentUser["Level"].Val<int>() < DiyCommon.MaxRoleLevel)
+                return Json(new DosResult(0, null, "仅超级管理员可查看License列表"));
+            var result = LocalLicenseServiceFacade.GetLicenseList(status, page, pageSize);
+            return Json(result);
+        }
+
+        /// <summary>
+        /// 管理员：获取 License 操作日志（超级管理员）
+        /// </summary>
+        [HttpGet]
+        public async Task<JsonResult> Logs([FromQuery] string hid = "", [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+        {
+            var currentUser = await DiyToken.GetCurrentUser();
+            if (currentUser == null || currentUser["Level"].Val<int>() < DiyCommon.MaxRoleLevel)
+                return Json(new DosResult(0, null, "仅超级管理员可查看操作日志"));
+            var result = LocalLicenseServiceFacade.GetLicenseLogs(hid, page, pageSize);
+            return Json(result);
+        }
+    }
+
+    /// <summary>
+    /// 导入离线注册文件请求参数
+    /// </summary>
+    public class LocalLicenseImportRegistrationRequest
+    {
+        /// <summary>硬件指纹ID（注册包中明文展示，用于导出密钥�?/summary>
+        public string HID { get; set; }
+        /// <summary>加密的注册包内容�?milic 文件内容�?/summary>
+        public string EncryptedContent { get; set; }
+        /// <summary>完整 .milic 文件内容（v2 信封格式，可自动读取 HID）</summary>
+        public string FileContent { get; set; }
+    }
+
+    public class LocalLicenseHeartbeatRequest
+    {
+        public string HID { get; set; }
+        public string LicenseHash { get; set; }
+        public string LocalTime { get; set; }
+        public string ProductType { get; set; }
+    }
+
+    /// <summary>
+    /// 离线注册申请请求参数
+    /// </summary>
+    public class LocalLicenseRegistrationRequest
+    {
+        /// <summary>授权公司名称</summary>
+        public string Company { get; set; }
+        /// <summary>联系人姓�?/summary>
+        public string Name { get; set; }
+        /// <summary>联系电话</summary>
+        public string Phone { get; set; }
+        /// <summary>服务器IP（选填，便于官方核实）</summary>
+        public string IP { get; set; }
+        /// <summary>产品类型：Personal / Enterprise</summary>
+        public string ProductType { get; set; }
+        /// <summary>备注</summary>
+        public string Remark { get; set; }
+    }
+
+    /// <summary>
+    /// License申请请求参数（客户提交）
+    /// </summary>
+    public class LocalLicenseApplyRequest
+    {
+        /// <summary>联系电话</summary>
+        public string Phone { get; set; }
+        /// <summary>服务器IP</summary>
+        public string IP { get; set; }
+        /// <summary>硬件指纹ID</summary>
+        public string HID { get; set; }
+        /// <summary>授权公司名称</summary>
+        public string Company { get; set; }
+        /// <summary>联系人姓�?/summary>
+        public string Name { get; set; }
+        /// <summary>产品类型：Personal / Enterprise（可选，优先使用用户的LicenseType�?/summary>
+        public string ProductType { get; set; }
+        /// <summary>授权到期时间</summary>
+        public DateTime? ExpirationDate { get; set; }
+        /// <summary>更新服务到期时间</summary>
+        public DateTime? UpdateExpirationDate { get; set; }
+        /// <summary>备注</summary>
+        public string Remark { get; set; }
+        /// <summary>License服务器的 sys_user 账号</summary>
+        public string Account { get; set; }
+        /// <summary>License服务器的 sys_user 密码</summary>
+        public string Password { get; set; }
+        /// <summary>验证码ID</summary>
+        public string CaptchaId { get; set; }
+        /// <summary>验证码�?/summary>
+        public string CaptchaValue { get; set; }
+    }
+
+    /// <summary>
+    /// License签发请求参数（管理员操作�?
+    /// </summary>
+    public class LocalLicenseIssueRequest
+    {
+        /// <summary>联系电话</summary>
+        public string Phone { get; set; }
+        /// <summary>服务器IP</summary>
+        public string IP { get; set; }
+        /// <summary>客户的硬件指纹ID</summary>
+        public string HID { get; set; }
+        /// <summary>授权公司名称</summary>
+        public string Company { get; set; }
+        /// <summary>授权人姓名（可选，默认同Company�?/summary>
+        public string Name { get; set; }
+        /// <summary>产品类型：Personal / Enterprise</summary>
+        public string ProductType { get; set; }
+        /// <summary>授权到期时间（默认一年后�?/summary>
+        public DateTime? ExpirationDate { get; set; }
+        /// <summary>更新服务到期时间（默认同ExpirationDate�?/summary>
+        public DateTime? UpdateExpirationDate { get; set; }
+    }
+
+    /// <summary>
+    /// License查询请求参数
+    /// </summary>
+    public class LocalLicenseCheckRequest
+    {
+        /// <summary>硬件指纹ID</summary>
+        public string HID { get; set; }
+    }
+
+    /// <summary>
+    /// 写入License文件请求参数
+    /// </summary>
+    public class LocalLicenseWriteLicenseFileRequest
+    {
+        /// <summary>License文件内容（JSON字符串）</summary>
+        public string LicenseContent { get; set; }
+    }
+
+    /// <summary>
+    /// License作废/恢复请求参数
+    /// </summary>
+    public class LocalLicenseRevokeRequest
+    {
+        /// <summary>硬件指纹ID</summary>
+        public string HID { get; set; }
+        /// <summary>true=作废, false=恢复</summary>
+        public bool Revoke { get; set; } = true;
+    }
+
+    /// <summary>
+    /// License驳回请求参数
+    /// </summary>
+    public class LocalLicenseRejectRequest
+    {
+        /// <summary>硬件指纹ID</summary>
+        public string HID { get; set; }
+        /// <summary>驳回原因</summary>
+        public string RejectReason { get; set; }
+    }
+}

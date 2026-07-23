@@ -226,7 +226,7 @@ import { ElMessage, ElMessageBox } from "element-plus";
 const LS_BASE = "https://api.itdos.com";
 
 export default {
-    name: "license_admin_console",
+    name: "local_license_admin_console",
     components: { Refresh, Search, Plus },
     data() {
         return {
@@ -278,7 +278,7 @@ export default {
             self.importingRegistration = true;
             const reader = new FileReader();
             reader.onload = function (event) {
-                self.centralFetch("/api/License/ImportRegistrationFile", {
+                self.centralFetch("/api/LocalLicense/ImportRegistrationFile", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ FileContent: event.target.result })
@@ -318,7 +318,7 @@ export default {
         },
         async loadList() {
             try {
-                var url = LS_BASE + "/api/License/List?page=" + this.page + "&pageSize=" + this.pageSize;
+                var url = LS_BASE + "/api/LocalLicense/List?page=" + this.page + "&pageSize=" + this.pageSize;
                 if (this.query.Status) url += "&status=" + this.query.Status;
                 var res = await this.centralFetch(url, { method: "GET" });
                 if (res && res.Code === 1 && res.Data) {
@@ -344,7 +344,7 @@ export default {
         },
         async loadStats() {
             try {
-                var res = await this.centralFetch("/api/License/List?pageSize=10000", { method: "GET" });
+                var res = await this.centralFetch("/api/LocalLicense/List?pageSize=10000", { method: "GET" });
                 if (res && res.Code === 1 && res.Data) {
                     var list = res.Data.List || [];
                     this.stats.total = list.length;
@@ -393,7 +393,7 @@ export default {
         async onApprove(row) {
             this.acting = row.HID;
             try {
-                var res = await this.centralFetch("/api/License/Approve", {
+                var res = await this.centralFetch("/api/LocalLicense/Approve", {
                     method: "POST", headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ HID: row.HID })
                 });
@@ -421,7 +421,7 @@ export default {
             }
             this.rejecting = true;
             try {
-                var res = await this.centralFetch("/api/License/Reject", {
+                var res = await this.centralFetch("/api/LocalLicense/Reject", {
                     method: "POST", headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ HID: this.rejectTarget.HID, RejectReason: this.rejectReason })
                 });
@@ -446,7 +446,7 @@ export default {
                     { confirmButtonText: "确认", cancelButtonText: "取消", type: "warning" }
                 );
                 this.acting = row.HID;
-                var res = await this.centralFetch("/api/License/Revoke", {
+                var res = await this.centralFetch("/api/LocalLicense/Revoke", {
                     method: "POST", headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ HID: row.HID, Revoke: revoke })
                 });
@@ -481,7 +481,7 @@ export default {
                 if (this.issueForm.ExpirationDate) {
                     payload.ExpirationDate = this.issueForm.ExpirationDate + "T00:00:00Z";
                 }
-                var res = await this.centralFetch("/api/License/Issue", {
+                var res = await this.centralFetch("/api/LocalLicense/Issue", {
                     method: "POST", headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(payload)
                 });
@@ -504,7 +504,7 @@ export default {
             this.logsLoading = true;
             this.showLogsDialog = true;
             try {
-                var res = await this.centralFetch("/api/License/Logs?hid=" + encodeURIComponent(hid), { method: "GET" });
+                var res = await this.centralFetch("/api/LocalLicense/Logs?hid=" + encodeURIComponent(hid), { method: "GET" });
                 if (res && res.Code === 1 && res.Data) {
                     this.logList = res.Data.List || [];
                 } else {

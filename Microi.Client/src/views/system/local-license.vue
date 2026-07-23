@@ -129,18 +129,6 @@
                                     </el-form-item>
                                     <el-row :gutter="20">
                                         <el-col :span="12" :xs="24">
-                                            <el-form-item label="授权账号" required>
-                                                <el-input v-model="applyForm.Account" placeholder="平台账号" clearable />
-                                            </el-form-item>
-                                        </el-col>
-                                        <el-col :span="12" :xs="24">
-                                            <el-form-item label="授权密码" required>
-                                                <el-input v-model="applyForm.Password" type="password" placeholder="平台密码" show-password clearable />
-                                            </el-form-item>
-                                        </el-col>
-                                    </el-row>
-                                    <el-row :gutter="20">
-                                        <el-col :span="12" :xs="24">
                                             <el-form-item label="公司名称" required>
                                                 <el-input v-model="applyForm.Company" placeholder="贵公司名称" clearable />
                                             </el-form-item>
@@ -173,10 +161,24 @@
                                         <el-input v-model="applyForm.Remark" type="textarea" :rows="3" placeholder="附加说明" />
                                     </el-form-item>
                                     <el-form-item>
-                                        <el-button type="primary" size="default" :loading="applying" @click="submitApply">
-                                            <el-icon><Promotion /></el-icon> {{ existingApp ? '重新提交申请' : '提交授权申请' }}
-                                        </el-button>
+                                        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+                                            <el-button type="primary" size="default" :loading="applying" @click="submitApply">
+                                                <el-icon><Promotion /></el-icon> {{ existingApp ? '重新提交申请' : '在线提交申请' }}
+                                            </el-button>
+                                            <el-divider direction="vertical" />
+                                            <el-button size="default" :loading="generatingReg" @click="generateRegistrationFile">
+                                                <el-icon><Download /></el-icon> 离线申请：生成注册文件
+                                            </el-button>
+                                        </div>
                                     </el-form-item>
+                                    <el-alert type="info" :closable="false" style="margin-top:4px">
+                                        <template #title>
+                                            <strong>内网/离线部署？</strong>
+                                            点击「生成注册文件」下载 <code>microi-registration.milic</code>，
+                                            发送至 <strong>{{ contactEmail }}</strong>，由授权总控台导入。
+                                            收到授权后在「手动导入授权文件」选项卡导入。
+                                        </template>
+                                    </el-alert>
                                 </el-form>
                             </el-tab-pane>
 
@@ -238,6 +240,47 @@
                                     </div>
                                 </div>
                             </el-tab-pane>
+                            <!-- TAB 3: 手动导入 -->
+                            <el-tab-pane name="import">
+                                <template #label>
+                                    <span><el-icon><FolderOpened /></el-icon> 手动导入授权文件</span>
+                                </template>
+                                <div class="import-section">
+                                    <p class="deploy-hint">已收到 <code>.lic</code> 授权文件或 License JSON 内容？在此处粘贴或上传，将自动写入当前服务器并验证。</p>
+
+                                    <!-- 文件上传 -->
+                                    <div class="import-upload-row">
+                                        <el-upload
+                                            ref="licUpload"
+                                            :auto-upload="false"
+                                            :show-file-list="false"
+                                            accept=".lic,.json"
+                                            :on-change="onLicFileChange">
+                                            <el-button :icon="FolderOpened">选择 .lic 文件</el-button>
+                                        </el-upload>
+                                        <span style="color:#999;font-size:12px;margin-left:8px">或直接在下方粘贴 JSON 内容</span>
+                                    </div>
+
+                                    <el-input
+                                        v-model="importContent"
+                                        type="textarea"
+                                        :rows="12"
+                                        placeholder='粘贴 License JSON 内容，例如：{"HID":"...","Company":"...","Signature":"..."}'
+                                        style="margin-top:16px;font-family:monospace;font-size:12px"
+                                    />
+
+                                    <div style="margin-top:16px;display:flex;gap:12px;align-items:center">
+                                        <el-button
+                                            type="primary"
+                                            :loading="importing"
+                                            :disabled="!importContent.trim()"
+                                            @click="submitImport">
+                                            <el-icon><Upload /></el-icon> 写入并验证
+                                        </el-button>
+                                        <el-button @click="importContent = ''">清空</el-button>
+                                    </div>
+                                </div>
+                            </el-tab-pane>
                         </el-tabs>
                     </el-card>
                 </template>
@@ -247,14 +290,14 @@
 </template>
 
 <script>
-import { Refresh, Monitor, CopyDocument, EditPen, Promotion, Search, Download, Upload } from "@element-plus/icons-vue";
+import { Refresh, Monitor, CopyDocument, EditPen, Promotion, Search, Download, Upload, FolderOpened, Check } from "@element-plus/icons-vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 
 const LICENSE_API_BASE = "https://api.itdos.com";
 
 export default {
-    name: "system_license",
-    components: { Refresh, Monitor, CopyDocument, EditPen, Promotion, Search, Download, Upload },
+    name: "system_local_license",
+    components: { Refresh, Monitor, CopyDocument, EditPen, Promotion, Search, Download, Upload, FolderOpened, Check },
     data() {
         return {
             pageLoading: true,
@@ -269,8 +312,6 @@ export default {
             // 申请表单
             activeTab: "apply",
             applyForm: {
-                Account: "",
-                Password: "",
                 Company: "",
                 Name: "",
                 Phone: "",
@@ -284,6 +325,13 @@ export default {
             existingApp: null,
             // 检查结果
             checkResult: null,
+            // 手动导入
+            importContent: "",
+            importing: false,
+            // 离线注册文件
+            generatingReg: false,
+            // 联系邮筱（从接口动态加载，替代硬编码）
+            contactEmail: "license@microi.net",
         };
     },
     mounted() {
@@ -310,11 +358,14 @@ export default {
         async init() {
             this.pageLoading = true;
             const self = this;
-            // 先获取HID，再验证License
+            this.DiyCommon.Get("/api/LocalLicense/GetConfig", function (result) {
+                if (result && result.Code === 1 && result.Data) {
+                    if (result.Data.ContactEmail) self.contactEmail = result.Data.ContactEmail;
+                }
+            });
             this.loadHID(() => {
                 self.loadVerify(() => {
                     self.pageLoading = false;
-                    // 如果未授权，向License服务器查询是否已提交过申请
                     if (!self.isLicensed && self.hid) {
                         self.queryExistingApplication();
                         self.loadCaptcha();
@@ -326,7 +377,7 @@ export default {
         // 获取本机HID
         loadHID(done) {
             const self = this;
-            self.DiyCommon.Get("/api/License/GetHardwareId", {}, function (result) {
+            self.DiyCommon.Get("/api/LocalLicense/GetHardwareId", {}, function (result) {
                 if (result && result.Code === 1 && result.Data) {
                     self.hid = result.Data.HID || "";
                 }
@@ -340,7 +391,7 @@ export default {
         loadVerify(done) {
             const self = this;
             self.verifying = true;
-            self.DiyCommon.Get("/api/License/Verify", {}, function (result) {
+            self.DiyCommon.Get("/api/LocalLicense/Verify", {}, function (result) {
                 self.verifying = false;
                 if (result && result.Code === 1 && result.Data) {
                     const d = result.Data;
@@ -367,7 +418,7 @@ export default {
         // 查询License服务器上是否已有该HID的申请记录
         queryExistingApplication() {
             const self = this;
-            fetch(LICENSE_API_BASE + "/api/License/QueryApplication", {
+            fetch(LICENSE_API_BASE + "/api/LocalLicense/QueryApplication", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ HID: self.hid }),
@@ -396,12 +447,14 @@ export default {
             if (name === "deploy" && this.hid && this.checkResult === null) {
                 this.checkLicense();
             }
+            if (name === "admin") this.loadLicenseList();
+            if (name === "logs") this.loadLogs();
         },
 
         // 加载验证码（从License服务器）
         loadCaptcha() {
             const self = this;
-            fetch(LICENSE_API_BASE + "/api/License/GetCaptcha", { method: "GET" })
+            fetch(LICENSE_API_BASE + "/api/LocalLicense/GetCaptcha", { method: "GET" })
                 .then(r => r.json())
                 .then(result => {
                     if (result && result.Code === 1 && result.Data) {
@@ -421,14 +474,6 @@ export default {
             const self = this;
             if (!self.hid) {
                 ElMessage.warning("HID获取失败，请刷新页面重试");
-                return;
-            }
-            if (!self.applyForm.Account.trim()) {
-                ElMessage.warning("请填写授权账号");
-                return;
-            }
-            if (!self.applyForm.Password) {
-                ElMessage.warning("请填写授权密码");
                 return;
             }
             if (!self.applyForm.Company.trim()) {
@@ -455,8 +500,6 @@ export default {
             self.applying = true;
             const param = {
                 HID: self.hid,
-                Account: self.applyForm.Account.trim(),
-                Password: self.applyForm.Password,
                 Company: self.applyForm.Company.trim(),
                 Name: self.applyForm.Name.trim(),
                 Phone: self.applyForm.Phone.trim(),
@@ -465,7 +508,7 @@ export default {
                 Remark: self.applyForm.Remark.trim(),
             };
 
-            fetch(LICENSE_API_BASE + "/api/License/Apply", {
+            fetch(LICENSE_API_BASE + "/api/LocalLicense/Apply", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(param),
@@ -512,7 +555,7 @@ export default {
             self.checking = true;
             self.checkResult = null;
 
-            fetch(LICENSE_API_BASE + "/api/License/Check", {
+            fetch(LICENSE_API_BASE + "/api/LocalLicense/Check", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ HID: self.hid }),
@@ -546,7 +589,7 @@ export default {
                 { type: "info", confirmButtonText: "确定部署", cancelButtonText: "取消" }
             ).then(() => {
                 self.deploying = true;
-                self.DiyCommon.Post("/api/License/WriteLicenseFile", {
+                self.DiyCommon.Post("/api/LocalLicense/WriteLicenseFile", {
                     LicenseContent: self.checkResult.LicenseContent,
                 }, function (result) {
                     self.deploying = false;
@@ -583,6 +626,90 @@ export default {
             ElMessage.success("License文件下载成功");
         },
 
+        // 离线申请：生成注册文件并下载
+        generateRegistrationFile() {
+            const self = this;
+            if (!self.applyForm.Company.trim()) { ElMessage.warning("请先填写公司名称"); return; }
+            if (!self.applyForm.Name.trim())    { ElMessage.warning("请先填写联系人"); return; }
+            if (!self.applyForm.Phone.trim())   { ElMessage.warning("请先填写联系电话"); return; }
+
+            self.generatingReg = true;
+            self.DiyCommon.Post("/api/LocalLicense/GenerateRegistrationFile", {
+                Company:     self.applyForm.Company.trim(),
+                Name:        self.applyForm.Name.trim(),
+                Phone:       self.applyForm.Phone.trim(),
+                IP:          "",
+                ProductType: "Personal",
+                Remark:      self.applyForm.Remark.trim(),
+            }, function (result) {
+                self.generatingReg = false;
+                if (result && result.Code === 1 && result.Data) {
+                    const data     = result.Data;
+                    const fileName = data.FileName || "microi-registration.milic";
+                    const content  = data.FileContent || data.EncryptedContent || "";
+                    const blob     = new Blob([content], { type: "application/octet-stream" });
+                    const url      = URL.createObjectURL(blob);
+                    const a        = document.createElement("a");
+                    a.href         = url;
+                    a.download     = fileName;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    const email = data.ContactEmail || self.contactEmail;
+                    ElMessage.success(`注册文件已下载（${fileName}），请发送至 ${email}，由授权总控台导入`);
+                } else {
+                    ElMessage.error((result && result.Msg) || "生成注册文件失败");
+                }
+            }, function () {
+                self.generatingReg = false;
+                ElMessage.error("请求失败，请检查服务是否正常");
+            });
+        },
+
+        // 选择文件后读取内容到 importContent
+        onLicFileChange(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => { this.importContent = e.target.result; };
+            reader.readAsText(file.raw);
+        },
+
+        // 手动导入：提交 JSON 到本地服务器
+        submitImport() {
+            const self = this;
+            const content = self.importContent.trim();
+            if (!content) { ElMessage.warning("请先填写或上传 License 内容"); return; }
+
+            // 简单格式校验
+            try { JSON.parse(content); } catch (e) {
+                ElMessage.error("内容不是有效的 JSON 格式，请检查");
+                return;
+            }
+
+            ElMessageBox.confirm(
+                "将把粘贴的 License 写入当前服务器并自动验证，确定继续？",
+                "导入确认",
+                { type: "info", confirmButtonText: "确定导入", cancelButtonText: "取消" }
+            ).then(() => {
+                self.importing = true;
+                self.DiyCommon.Post("/api/LocalLicense/WriteLicenseFile", {
+                    LicenseContent: content,
+                }, function (result) {
+                    self.importing = false;
+                    if (result && result.Code === 1) {
+                        ElMessage.success(result.Msg || "License 导入成功！");
+                        self.importContent = "";
+                        self.loadVerify();
+                    } else {
+                        ElMessage.error((result && result.Msg) || "导入失败");
+                    }
+                }, function () {
+                    self.importing = false;
+                    ElMessage.error("请求失败，请检查网络");
+                });
+            }).catch(() => {});
+        },
+
         // 复制文本
         copyText(text) {
             if (!text) return;
@@ -599,6 +726,150 @@ export default {
                 document.execCommand("copy");
                 document.body.removeChild(ta);
                 ElMessage.success("已复制到剪贴板");
+            });
+        },
+
+        // ──────────── 管理员方法 ────────────
+
+        // 加载License列表
+        loadLicenseList() {
+            const self = this;
+            self.adminLoading = true;
+            self.DiyCommon.Get("/api/LocalLicense/List", { status: self.adminFilter || "" }, function (result) {
+                self.adminLoading = false;
+                if (result && result.Code === 1 && result.Data) {
+                    self.licenseList = result.Data.List || [];
+                }
+            }, function () {
+                self.adminLoading = false;
+            });
+        },
+
+        // 状态标签颜色
+        statusTagType(status) {
+            const m = { Pending: "info", Issued: "success", Rejected: "danger", Revoked: "warning" };
+            return m[status] || "info";
+        },
+        statusLabel(status) {
+            const m = { Pending: "待审核", Issued: "已签发", Rejected: "已驳回", Revoked: "已作废" };
+            return m[status] || status;
+        },
+
+        // 日志操作标签颜色
+        logActionTag(action) {
+            const m = { Apply: "info", Issue: "success", Approve: "success", Reject: "danger", Revoke: "warning", Restore: "primary" };
+            return m[action] || "info";
+        },
+
+        // 审核通过
+        adminApprove(row) {
+            const self = this;
+            ElMessageBox.confirm(`确定审核通过 HID: ${row.HID} 的申请并签发 License？`, "审核确认", {
+                type: "success", confirmButtonText: "通过并签发", cancelButtonText: "取消"
+            }).then(() => {
+                self.DiyCommon.Post("/api/LocalLicense/Approve", { HID: row.HID }, function (result) {
+                    if (result && result.Code === 1) {
+                        ElMessage.success("审核通过，License 已签发");
+                        self.loadLicenseList();
+                    } else {
+                        ElMessage.error((result && result.Msg) || "操作失败");
+                    }
+                });
+            }).catch(() => {});
+        },
+
+        // 驳回申请
+        adminReject(row) {
+            const self = this;
+            ElMessageBox.prompt("请输入驳回原因", "驳回申请", { type: "warning", confirmButtonText: "驳回", cancelButtonText: "取消" })
+                .then(({ value }) => {
+                    self.DiyCommon.Post("/api/LocalLicense/Reject", { HID: row.HID, RejectReason: value || "" }, function (result) {
+                        if (result && result.Code === 1) {
+                            ElMessage.success("已驳回");
+                            self.loadLicenseList();
+                        } else {
+                            ElMessage.error((result && result.Msg) || "操作失败");
+                        }
+                    });
+                }).catch(() => {});
+        },
+
+        // 作废/恢复License
+        adminRevoke(row, revoke) {
+            const self = this;
+            const action = revoke ? "作废" : "恢复";
+            ElMessageBox.confirm(`确定${action} HID: ${row.HID} 的 License？`, `${action}确认`, {
+                type: "warning", confirmButtonText: `确定${action}`, cancelButtonText: "取消"
+            }).then(() => {
+                self.DiyCommon.Post("/api/LocalLicense/Revoke", { HID: row.HID, Revoke: revoke }, function (result) {
+                    if (result && result.Code === 1) {
+                        ElMessage.success(`License 已${action}`);
+                        self.loadLicenseList();
+                    } else {
+                        ElMessage.error((result && result.Msg) || "操作失败");
+                    }
+                });
+            }).catch(() => {});
+        },
+
+        // 直接签发
+        doIssue() {
+            const self = this;
+            if (!self.issueForm.HID.trim()) { ElMessage.warning("请输入HID"); return; }
+            if (!self.issueForm.Company.trim()) { ElMessage.warning("请输入公司名称"); return; }
+            self.issuing = true;
+            self.DiyCommon.Post("/api/LocalLicense/Issue", {
+                HID: self.issueForm.HID.trim(),
+                Company: self.issueForm.Company.trim(),
+                Name: self.issueForm.Name.trim(),
+                Phone: self.issueForm.Phone.trim(),
+                IP: "",
+                ProductType: self.issueForm.ProductType,
+                ExpirationDate: self.issueForm.ExpirationDate || null,
+            }, function (result) {
+                self.issuing = false;
+                if (result && result.Code === 1) {
+                    ElMessage.success("License 签发成功");
+                    self.showIssueDialog = false;
+                    self.issueForm = { HID: "", Company: "", Name: "", Phone: "", ProductType: "Personal", ExpirationDate: "" };
+                    self.loadLicenseList();
+                } else {
+                    ElMessage.error((result && result.Msg) || "签发失败");
+                }
+            }, function () {
+                self.issuing = false;
+                ElMessage.error("请求失败");
+            });
+        },
+
+        // 查询操作日志
+        loadLogs() {
+            const self = this;
+            self.logsLoading = true;
+            self.DiyCommon.Get("/api/LocalLicense/Logs", { hid: self.logHidFilter || "" }, function (result) {
+                self.logsLoading = false;
+                if (result && result.Code === 1 && result.Data) {
+                    self.logList = result.Data.List || [];
+                }
+            }, function () {
+                self.logsLoading = false;
+            });
+        },
+
+        // 从列表跳转查看某HID的日志
+        viewLogs(hid) {
+            this.logHidFilter = hid;
+            this.activeTab = "logs";
+            this.loadLogs();
+        },
+
+        // 检测当前用户是否为超级管理员
+        checkSuperAdmin() {
+            const self = this;
+            self.DiyCommon.Get("/api/LocalLicense/List", { status: "", page: 1, pageSize: 1 }, function (result) {
+                self.isSuperAdmin = result && result.Code === 1;
+            }, function () {
+                self.isSuperAdmin = false;
             });
         },
     },
@@ -761,6 +1032,16 @@ export default {
 /* ===== 申请表单 ===== */
 .apply-form {
     padding: 16px 8px 0;
+}
+
+/* ===== 手动导入区域 ===== */
+.import-section {
+    padding: 16px 8px 0;
+}
+.import-upload-row {
+    display: flex;
+    align-items: center;
+    margin-top: 4px;
 }
 
 /* ===== 部署区域 ===== */

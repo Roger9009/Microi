@@ -476,17 +476,18 @@
 
 ---
 
-## 16. Microi.License（授权模块 - 新增）
+## 16. Microi.LocalLicense（本地附加授权模块）
 
 ### 当前状态
-- 已创建独立项目 `Microi.License` 与 `Microi.net.Api/Handler/License` 实现。
+- 已创建独立项目 `Microi.LocalLicense` 与 `Microi.net.Api/Handler/LocalLicense` 实现。
+- 使用 `/api/LocalLicense/*` 独立路由，不占用框架 `/api/License/*`。
 - 使用 RSA-2048 签名验证 License 文件。
 - 支持硬件指纹（HID）绑定、申请、签发、审核、作废、手动导入。
 - 启动时验证 License，失败进入宽限期。
 
 ### 技术债务
 - 公钥以常量硬编码，需手动替换后重新编译。
-- `LicenseService` 为静态类，不利于单测与生命周期管理。
+- `LocalLicenseService` 为静态类，不利于单测与生命周期管理。
 - 宽限期策略（时长、功能限制）未细化。
 - 缺少 License 服务器与管理后台页面。
 

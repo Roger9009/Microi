@@ -150,7 +150,7 @@
 <script>
 import { Refresh } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
-import { BusinessMonitorApi, LicenseApi } from "@/utils/business-base";
+import { BusinessMonitorApi, LocalLicenseApi } from "@/utils/business-base";
 
 export default {
     name: "business_monitor",
@@ -184,7 +184,7 @@ export default {
             try {
                 var modRes = await BusinessMonitorApi.getModules();
                 var healthRes = await BusinessMonitorApi.health();
-                var licRes = await LicenseApi.getStatus();
+                var licRes = await LocalLicenseApi.getStatus();
                 if (modRes && modRes.Code === 1) {
                     this.modules = modRes.Data || [];
                     this.faultedModules = this.modules.filter(function (m) {

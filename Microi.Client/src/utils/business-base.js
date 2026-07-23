@@ -211,48 +211,48 @@ export const BusinessAuthApi = {
 };
 
 // ═══════════════════════════════════════════════════════════════
-//  5. License 授权管理 — 对应 LicenseController（本地端点）
+//  5. 本地 License 授权管理 — 对应 LocalLicenseController
 // ═══════════════════════════════════════════════════════════════
 
-export const LicenseApi = {
+export const LocalLicenseApi = {
   /** 获取当前服务器 HID */
   getHardwareId() {
-    return post('/api/License/GetHardwareId');
+    return post('/api/LocalLicense/GetHardwareId');
   },
 
   /** 验证本地 License 状态 */
   verify() {
-    return post('/api/License/Verify');
+    return post('/api/LocalLicense/Verify');
   },
 
   /** 获取 License 运行状态摘要（轻量，含心跳/宽限期/吊销信息） */
   getStatus() {
-    return post('/api/License/GetStatus');
+    return post('/api/LocalLicense/GetStatus');
   },
 
   /** 获取 License 心跳状态（不触发 Verify） */
   getHeartbeatStatus() {
-    return post('/api/License/GetHeartbeatStatus');
+    return post('/api/LocalLicense/GetHeartbeatStatus');
   },
 
   /** 获取 License 配置（ContactEmail 等） */
   getConfig() {
-    return post('/api/License/GetConfig');
+    return post('/api/LocalLicense/GetConfig');
   },
 
   /** 获取诊断信息（需登录） */
   diagnostics() {
-    return post('/api/License/Diagnostics');
+    return post('/api/LocalLicense/Diagnostics');
   },
 
   /** 写入 License 文件到磁盘（前验证签名+HID+到期） */
   writeLicenseFile(licenseContent) {
-    return post('/api/License/WriteLicenseFile', { LicenseContent: licenseContent });
+    return post('/api/LocalLicense/WriteLicenseFile', { LicenseContent: licenseContent });
   },
 
   /** 生成离线注册申请文件 */
   generateRegistrationFile({ Company, Name, Phone, ProductType, Remark }) {
-    return post('/api/License/GenerateRegistrationFile', { Company, Name, Phone, ProductType, Remark });
+    return post('/api/LocalLicense/GenerateRegistrationFile', { Company, Name, Phone, ProductType, Remark });
   }
 };
 
@@ -322,7 +322,7 @@ export default {
   BusinessMonitorApi,
   BusinessSchemaApi,
   BusinessAuthApi,
-  LicenseApi,
+  LocalLicenseApi,
   BusinessBaseApi,
   PluginApi
 };

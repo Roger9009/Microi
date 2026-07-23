@@ -1,11 +1,11 @@
 using System;
 
-namespace Microi.License
+namespace Microi.LocalLicense
 {
     /// <summary>
-    /// License 文件载荷（存储在 license.json 中）
+    /// License 文件载荷（存储在 local-license.json 中）
     /// </summary>
-    public class LicensePayload
+    public class LocalLicensePayload
     {
         /// <summary>硬件指纹ID</summary>
         public string HID { get; set; }
@@ -32,7 +32,7 @@ namespace Microi.License
     /// <summary>
     /// License 本地验证结果
     /// </summary>
-    public class LicenseVerifyResult
+    public class LocalLicenseVerifyResult
     {
         /// <summary>License是否有效</summary>
         public bool Valid { get; set; }
@@ -59,9 +59,9 @@ namespace Microi.License
     }
 
     /// <summary>
-    /// diy_license 数据库记录实体
+    /// diy_local_license 数据库记录实体
     /// </summary>
-    public class DiyLicenseRecord
+    public class DiyLocalLicenseRecord
     {
         /// <summary>主键</summary>
         public string Id { get; set; }
@@ -100,7 +100,7 @@ namespace Microi.License
     /// <summary>
     /// License 状态常量
     /// </summary>
-    public static class LicenseStatus
+    public static class LocalLicenseStatus
     {
         public const string Pending = "Pending";
         public const string Issued = "Issued";
@@ -111,7 +111,7 @@ namespace Microi.License
     /// <summary>
     /// 产品类型常量
     /// </summary>
-    public static class LicenseProductType
+    public static class LocalLicenseProductType
     {
         public const string Personal = "Personal";
         public const string Enterprise = "Enterprise";

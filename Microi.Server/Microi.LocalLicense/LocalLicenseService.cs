@@ -4,53 +4,61 @@ using Microi.net;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace Microi.License
+namespace Microi.LocalLicense
 {
     /// <summary>
     /// License 授权核心服务（静态类）
     ///
     /// 密钥配置说明：
     ///   私钥（仅License服务器需要）：
-    ///     环境变量 MICROI_LICENSE_PRIVATE_KEY = PKCS#8 DER 的 Base64 编码
-    ///     或将 PEM 文件放置于 AppBaseDir/license-private.pem
+    ///     环境变量 MICROI_LOCAL_LICENSE_PRIVATE_KEY = PKCS#8 DER 的 Base64 编码
+    ///     或将 PEM 文件放置于 AppBaseDir/local-license-private.pem
     ///   公钥（所有服务器需要）：
-    ///     环境变量 MICROI_LICENSE_PUBLIC_KEY = SubjectPublicKeyInfo DER 的 Base64 编码
-    ///     或将 PEM 文件放置于 AppBaseDir/license-public.pem
-    ///     或替换 LicenseService.cs 中的 DefaultPublicKeyBase64 常量
+    ///     环境变量 MICROI_LOCAL_LICENSE_PUBLIC_KEY = SubjectPublicKeyInfo DER 的 Base64 编码
+    ///     或将 PEM 文件放置于 AppBaseDir/local-license-public.pem
+    ///     或替换 LocalLicenseService.cs 中的 DefaultPublicKeyBase64 常量
     ///
     /// 初始化密钥对：
-    ///   调用 LicenseService.GenerateKeyPair() 获取新的 RSA 2048 密钥对
+    ///   调用 LocalLicenseService.GenerateKeyPair() 获取新的 RSA 2048 密钥对
     ///   将输出的 PublicKeyBase64 替换到 DefaultPublicKeyBase64 常量中
-    ///   将 PrivateKeyBase64 设置为环境变量 MICROI_LICENSE_PRIVATE_KEY（仅 License 服务器）
+    ///   将 PrivateKeyBase64 设置为环境变量 MICROI_LOCAL_LICENSE_PRIVATE_KEY（仅 License 服务器）
     /// </summary>
-    public static class LicenseService
+    public static class LocalLicenseService
     {
         private const string DefaultPublicKeyBase64 = "REPLACE_WITH_YOUR_RSA2048_PUBLIC_KEY_BASE64";
-        private const string LicenseFileName = "license.json";
-        private const string PrivateKeyFileName = "license-private.pem";
-        private const string PublicKeyFileName = "license-public.pem";
+        private const string LicenseFileName = "local-license.json";
+        private const string PrivateKeyFileName = "local-license-private.pem";
+        private const string PublicKeyFileName = "local-license-public.pem";
+        private const string LegacyLicenseFileName = "license.json";
+        private const string LegacyPrivateKeyFileName = "license-private.pem";
+        private const string LegacyPublicKeyFileName = "license-public.pem";
 
         private static volatile bool _isGracePeriod = false;
-        private static LicenseVerifyResult _cachedVerify = null;
+        private static LocalLicenseVerifyResult _cachedVerify = null;
         private static readonly object _verifyLock = new object();
+        private static readonly ConcurrentDictionary<string, byte> LegacyFallbackWarnings = new ConcurrentDictionary<string, byte>();
 
         private const int GracePeriodDays = 7;
-        private const string GraceFileName = ".lic_grace";
-        private const string ValidProofFileName = ".lic_proof";
+        private const string GraceFileName = ".local_lic_grace";
+        private const string ValidProofFileName = ".local_lic_proof";
+        private const string LegacyGraceFileName = ".lic_grace";
+        private const string LegacyValidProofFileName = ".lic_proof";
         private const string GraceHmacKey = "microi-grace-hmac-2026-v2";
 
         public const int HeartbeatIntervalHours = 12;
         public const int OfflineGraceDays = 30;
-        private const string HeartbeatFileName = ".lic_hb";
-        private const string DefaultHeartbeatUrl = "https://api.itdos.com/api/License/Heartbeat";
+        private const string HeartbeatFileName = ".local_lic_hb";
+        private const string LegacyHeartbeatFileName = ".lic_hb";
+        private const string DefaultHeartbeatUrl = "https://api.itdos.com/api/LocalLicense/Heartbeat";
         private const string DefaultContactEmail = "license@microi.net";
         public const string EncPrefix = "MILIC_ENC:";
-        private const string LicenseLogTable = "diy_license_log";
+        private const string LicenseLogTable = "diy_local_license_log";
 
         // ── License 操作日志动作常量 ──
         public static class LogAction
@@ -69,19 +77,17 @@ namespace Microi.License
         private static readonly System.Net.Http.HttpClient _heartbeatHttp = new System.Net.Http.HttpClient() { Timeout = TimeSpan.FromSeconds(10) };
 
         private static string HeartbeatServerUrl =>
-            ConfigHelper.GetAppSettings("LicenseHeartbeatUrl").DosIsNullOrWhiteSpace()
-                ? DefaultHeartbeatUrl : ConfigHelper.GetAppSettings("LicenseHeartbeatUrl");
+            GetSetting("LocalLicenseHeartbeatUrl", "LicenseHeartbeatUrl") ?? DefaultHeartbeatUrl;
 
         public static string ContactEmail =>
-            ConfigHelper.GetAppSettings("LicenseContactEmail").DosIsNullOrWhiteSpace()
-                ? DefaultContactEmail : ConfigHelper.GetAppSettings("LicenseContactEmail");
+            GetSetting("LocalLicenseContactEmail", "LicenseContactEmail") ?? DefaultContactEmail;
 
         public static bool IsRevokedByServer => _revokedByServer;
         public static bool IsGracePeriod => _isGracePeriod;
 
         // ======================== 公共 API ========================
 
-        public static string GetHardwareId() => HardwareHelper.GetHardwareId();
+        public static string GetHardwareId() => LocalLicenseHardwareHelper.GetHardwareId();
 
         public static bool IsOpenSourceMode()
         {
@@ -89,7 +95,7 @@ namespace Microi.License
             return pk == DefaultPublicKeyBase64 || pk == "REPLACE_WITH_YOUR_RSA2048_PUBLIC_KEY_BASE64";
         }
 
-        public static LicenseVerifyResult Verify()
+        public static LocalLicenseVerifyResult Verify()
         {
             lock (_verifyLock) { _cachedVerify = VerifyInternal(); return _cachedVerify; }
         }
@@ -101,7 +107,7 @@ namespace Microi.License
         public static (bool Allowed, int DaysLeft) CheckGracePeriod()
         {
             var now = DateTime.UtcNow;
-            var gracePath = Path.Combine(AppContext.BaseDirectory, GraceFileName);
+            var gracePath = GetDataPath(GraceFileName, LegacyGraceFileName);
             var proofExpiry = ReadValidProof();
             if (proofExpiry == null)
             {
@@ -163,7 +169,7 @@ namespace Microi.License
                 var expStr = expirationDate.ToUniversalTime().ToString("O");
                 var hmac = ComputeProofHmac(hid, expStr);
                 var proofValue = AesEncrypt($"{expStr}|{hmac}", DeriveDbKey());
-                File.WriteAllText(Path.Combine(AppContext.BaseDirectory, ValidProofFileName), proofValue, Encoding.UTF8);
+                File.WriteAllText(GetDataPath(ValidProofFileName, LegacyValidProofFileName), proofValue, Encoding.UTF8);
             }
             catch (Exception ex) { Console.WriteLine($"Microi：【License】有效证明写入失败（不影响运行）：{ex.Message}"); }
         }
@@ -172,7 +178,7 @@ namespace Microi.License
 
         public static object GetDiagnostics()
         {
-            var vr = Verify(); var hw = HardwareHelper.GetDiagnosticInfo();
+            var vr = Verify(); var hw = LocalLicenseHardwareHelper.GetDiagnosticInfo();
             var hasPrv = !string.IsNullOrWhiteSpace(GetPrivateKey());
             var pk = GetPublicKey(); var isDefault = pk == DefaultPublicKeyBase64;
             return new
@@ -216,7 +222,7 @@ namespace Microi.License
                 var plainJson = IsEncrypted(licenseContent) ? AesDecrypt(licenseContent, DeriveFileKey(hid)) : licenseContent;
                 if (plainJson == null) return new DosResult(0, null, "License解密失败");
 
-                var payload = JsonConvert.DeserializeObject<LicensePayload>(plainJson);
+                var payload = JsonConvert.DeserializeObject<LocalLicensePayload>(plainJson);
                 if (payload == null) return new DosResult(0, null, "License格式无效");
                 if (!VerifySignature(payload)) return new DosResult(0, null, "License签名验证失败");
                 if (!string.Equals(payload.HID, hid, StringComparison.OrdinalIgnoreCase))
@@ -229,7 +235,7 @@ namespace Microi.License
                 File.WriteAllText(path, toWrite, Encoding.UTF8);
                 lock (_verifyLock) { _cachedVerify = null; }
                 _revokedByServer = false;
-                try { var hbPath = Path.Combine(AppContext.BaseDirectory, HeartbeatFileName);
+                try { var hbPath = GetDataPath(HeartbeatFileName, LegacyHeartbeatFileName);
                     if (File.Exists(hbPath)) File.WriteAllText(hbPath, AesEncrypt($"{DateTime.UtcNow:O}|Issued", DeriveFileKey(hid)), Encoding.UTF8); } catch { }
                 return new DosResult(1, new { Path = path }, "License文件写入成功（AES加密存储）");
             }
@@ -253,8 +259,8 @@ namespace Microi.License
             if (!r.Valid) return false;
             return feature switch
             {
-                Features.AiPlugin => r.ProductType == LicenseProductType.Enterprise,
-                Features.MultiTenant => r.ProductType == LicenseProductType.Enterprise,
+                Features.AiPlugin => r.ProductType == LocalLicenseProductType.Enterprise,
+                Features.MultiTenant => r.ProductType == LocalLicenseProductType.Enterprise,
                 Features.AdvancedReport => r.Valid,
                 Features.CustomDomain => r.Valid,
                 Features.LicenseAdmin => r.Valid,
@@ -266,7 +272,7 @@ namespace Microi.License
 
         public static void LoadHeartbeatStatus()
         {
-            var hp = Path.Combine(AppContext.BaseDirectory, HeartbeatFileName);
+            var hp = GetDataPath(HeartbeatFileName, LegacyHeartbeatFileName);
             if (!File.Exists(hp)) return;
             try
             {
@@ -274,7 +280,7 @@ namespace Microi.License
                 var decrypted = AesDecrypt(encrypted, DeriveFileKey(GetHardwareId()));
                 if (string.IsNullOrWhiteSpace(decrypted)) return;
                 var parts = decrypted.Split('|');
-                if (parts.Length >= 2 && parts[1].Trim() == LicenseStatus.Revoked)
+                if (parts.Length >= 2 && parts[1].Trim() == LocalLicenseStatus.Revoked)
                 {
                     _revokedByServer = true;
                     Console.WriteLine("Microi：【⚠️License】检测到上次心跳记录服务端已吊销该License");
@@ -291,10 +297,10 @@ namespace Microi.License
                 var r = _cachedVerify ?? Verify();
                 if (!r.Valid) return "skip:unlicensed";
 
-                var hp = Path.Combine(AppContext.BaseDirectory, HeartbeatFileName);
+                var hp = GetDataPath(HeartbeatFileName, LegacyHeartbeatFileName);
                 var json = JsonConvert.SerializeObject(new
                 {
-                    HID = hid, LicenseHash = HardwareHelper.Sha256Hex(r.ExpirationDate?.ToString("O") + hid),
+                    HID = hid, LicenseHash = LocalLicenseHardwareHelper.Sha256Hex(r.ExpirationDate?.ToString("O") + hid),
                     LocalTime = DateTime.UtcNow.ToString("O"), ProductType = r.ProductType
                 });
                 var resp = await _heartbeatHttp.PostAsync(HeartbeatServerUrl,
@@ -332,7 +338,7 @@ namespace Microi.License
 
         public static (bool OverOfflineLimit, int OfflineDays) CheckOfflineDays()
         {
-            var hp = Path.Combine(AppContext.BaseDirectory, HeartbeatFileName);
+            var hp = GetDataPath(HeartbeatFileName, LegacyHeartbeatFileName);
             if (!File.Exists(hp)) return (false, 0);
             try
             {
@@ -355,9 +361,9 @@ namespace Microi.License
             try
             {
                 var hid = GetHardwareId(); var rt = DateTime.UtcNow.ToString("O");
-                var pt = string.IsNullOrWhiteSpace(productType) ? LicenseProductType.Personal : productType;
+                var pt = string.IsNullOrWhiteSpace(productType) ? LocalLicenseProductType.Personal : productType;
                 var canonical = $"{hid}|{company}|{name}|{phone}|{pt}|{rt}";
-                var rh = HardwareHelper.Sha256Hex(canonical);
+                var rh = LocalLicenseHardwareHelper.Sha256Hex(canonical);
                 var pkg = JsonConvert.SerializeObject(new { Version = "1.0", HID = hid,
                     Company = company ?? "", Name = name ?? "", Phone = phone ?? "", IP = ip ?? "",
                     ProductType = pt, Remark = remark ?? "", RequestTime = rt, RequestHash = rh }, Formatting.Indented);
@@ -430,38 +436,38 @@ namespace Microi.License
                 var name = pkg["Name"]?.ToString() ?? "";
                 var phone = pkg["Phone"]?.ToString() ?? "";
                 var ip = pkg["IP"]?.ToString() ?? "";
-                var pt = pkg["ProductType"]?.ToString() ?? LicenseProductType.Personal;
+                var pt = pkg["ProductType"]?.ToString() ?? LocalLicenseProductType.Personal;
                 var remark = pkg["Remark"]?.ToString() ?? "";
                 var rh = pkg["RequestHash"]?.ToString() ?? "";
                 var rt = pkg["RequestTime"]?.ToString() ?? "";
                 var canonical = $"{hid}|{company}|{name}|{phone}|{pt}|{rt}";
-                if (!string.Equals(rh, HardwareHelper.Sha256Hex(canonical), StringComparison.OrdinalIgnoreCase))
+                if (!string.Equals(rh, LocalLicenseHardwareHelper.Sha256Hex(canonical), StringComparison.OrdinalIgnoreCase))
                     return Task.FromResult(new DosResult(0, null, "注册文件完整性验证失败"));
 
                 var db = GetLicenseDb(); if (db == null) return Task.FromResult(new DosResult(0, null, "授权中心独立数据库未配置或不可用"));
-                var existing = db.FromSql("SELECT * FROM diy_license WHERE HID=@p0").AddInParameter("@p0", hid).First<dynamic>();
+                var existing = db.FromSql("SELECT * FROM diy_local_license WHERE HID=@p0").AddInParameter("@p0", hid).First<dynamic>();
                 if (existing != null)
                 {
                     var obj = JObject.FromObject(existing); var st = obj["Status"]?.ToString();
-                    if (st == LicenseStatus.Issued) return Task.FromResult(new DosResult(0, null, "该HID已签发License"));
-                    if (st == LicenseStatus.Pending) return Task.FromResult(new DosResult(2, new { Status = LicenseStatus.Pending }, "已提交申请"));
-                    db.FromSql(@"UPDATE diy_license SET Company=@p1, Name=@p2, Phone=@p3, IP=@p4,
+                    if (st == LocalLicenseStatus.Issued) return Task.FromResult(new DosResult(0, null, "该HID已签发License"));
+                    if (st == LocalLicenseStatus.Pending) return Task.FromResult(new DosResult(2, new { Status = LocalLicenseStatus.Pending }, "已提交申请"));
+                    db.FromSql(@"UPDATE diy_local_license SET Company=@p1, Name=@p2, Phone=@p3, IP=@p4,
                         ProductType=@p5, Status=@p6, RejectReason=NULL, Remark=@p7, UpdateTime=@p8 WHERE HID=@p0")
                         .AddInParameter("@p0", hid).AddInParameter("@p1", company).AddInParameter("@p2", name)
                         .AddInParameter("@p3", phone).AddInParameter("@p4", ip).AddInParameter("@p5", pt)
-                        .AddInParameter("@p6", LicenseStatus.Pending).AddInParameter("@p7", remark)
+                        .AddInParameter("@p6", LocalLicenseStatus.Pending).AddInParameter("@p7", remark)
                         .AddInParameter("@p8", DateTime.Now).ExecuteNonQuery();
                     WriteLicenseLog(hid, LogAction.Import, detail: $"总控台导入注册文件（更新） | {company}");
-                    return Task.FromResult(new DosResult(1, new { HID = hid, Status = LicenseStatus.Pending }, "注册文件已导入（更新）"));
+                    return Task.FromResult(new DosResult(1, new { HID = hid, Status = LocalLicenseStatus.Pending }, "注册文件已导入（更新）"));
                 }
-                db.FromSql(@"INSERT INTO diy_license (Id,HID,Company,Name,Phone,IP,ProductType,Status,Remark,CreateTime)
+                db.FromSql(@"INSERT INTO diy_local_license (Id,HID,Company,Name,Phone,IP,ProductType,Status,Remark,CreateTime)
                     VALUES (@p0,@p1,@p2,@p3,@p4,@p5,@p6,@p7,@p8,@p9)")
                     .AddInParameter("@p0", Guid.NewGuid().ToString("N").ToUpperInvariant()).AddInParameter("@p1", hid)
                     .AddInParameter("@p2", company).AddInParameter("@p3", name).AddInParameter("@p4", phone)
-                    .AddInParameter("@p5", ip).AddInParameter("@p6", pt).AddInParameter("@p7", LicenseStatus.Pending)
+                    .AddInParameter("@p5", ip).AddInParameter("@p6", pt).AddInParameter("@p7", LocalLicenseStatus.Pending)
                     .AddInParameter("@p8", remark).AddInParameter("@p9", DateTime.Now).ExecuteNonQuery();
                 WriteLicenseLog(hid, LogAction.Import, detail: $"总控台导入注册文件（新增） | {company}");
-                return Task.FromResult(new DosResult(1, new { HID = hid, Status = LicenseStatus.Pending }, "注册文件已导入（新增）"));
+                return Task.FromResult(new DosResult(1, new { HID = hid, Status = LocalLicenseStatus.Pending }, "注册文件已导入（新增）"));
             }
             catch (Exception ex) { return Task.FromResult(new DosResult(0, null, "导入失败：" + ex.Message)); }
         }
@@ -486,33 +492,33 @@ namespace Microi.License
             try
             {
                 var db = GetLicenseDb(); if (db == null) return Task.FromResult(new DosResult(0, null, "数据库未就绪"));
-                var existing = db.FromSql("SELECT * FROM diy_license WHERE HID=@p0").AddInParameter("@p0", hid).First<dynamic>();
+                var existing = db.FromSql("SELECT * FROM diy_local_license WHERE HID=@p0").AddInParameter("@p0", hid).First<dynamic>();
                 if (existing != null)
                 {
                     var obj = JObject.FromObject(existing); var st = obj["Status"]?.ToString();
-                    if (st == LicenseStatus.Issued) return Task.FromResult(new DosResult(0, null, "该HID已签发License"));
-                    if (st == LicenseStatus.Pending) return Task.FromResult(new DosResult(2, new { Status = LicenseStatus.Pending }, "已提交申请"));
-                    db.FromSql(@"UPDATE diy_license SET Company=@p1, Name=@p2, Phone=@p3, IP=@p4,
+                    if (st == LocalLicenseStatus.Issued) return Task.FromResult(new DosResult(0, null, "该HID已签发License"));
+                    if (st == LocalLicenseStatus.Pending) return Task.FromResult(new DosResult(2, new { Status = LocalLicenseStatus.Pending }, "已提交申请"));
+                    db.FromSql(@"UPDATE diy_local_license SET Company=@p1, Name=@p2, Phone=@p3, IP=@p4,
                         ProductType=@p5, Status=@p6, RejectReason=NULL, Remark=@p7, UpdateTime=@p8 WHERE HID=@p0")
                         .AddInParameter("@p0", hid).AddInParameter("@p1", company ?? "").AddInParameter("@p2", name ?? "")
                         .AddInParameter("@p3", phone ?? "").AddInParameter("@p4", ip ?? "")
-                        .AddInParameter("@p5", productType ?? LicenseProductType.Personal)
-                        .AddInParameter("@p6", LicenseStatus.Pending).AddInParameter("@p7", remark ?? "")
+                        .AddInParameter("@p5", productType ?? LocalLicenseProductType.Personal)
+                        .AddInParameter("@p6", LocalLicenseStatus.Pending).AddInParameter("@p7", remark ?? "")
                         .AddInParameter("@p8", DateTime.Now).ExecuteNonQuery();
                     WriteLicenseLog(hid, LogAction.Apply, operatorName, operatorIP, $"重新申请 | {company}");
-                    return Task.FromResult(new DosResult(1, new { Status = LicenseStatus.Pending }, "申请已重新提交"));
+                    return Task.FromResult(new DosResult(1, new { Status = LocalLicenseStatus.Pending }, "申请已重新提交"));
                 }
-                var count = db.FromSql(@"INSERT INTO diy_license (Id, HID, Company, Name, Phone, IP, ProductType, Status, Remark, CreateTime)
+                var count = db.FromSql(@"INSERT INTO diy_local_license (Id, HID, Company, Name, Phone, IP, ProductType, Status, Remark, CreateTime)
                     VALUES (@p0, @p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9)")
                     .AddInParameter("@p0", Guid.NewGuid().ToString("N").ToUpperInvariant()).AddInParameter("@p1", hid)
                     .AddInParameter("@p2", company ?? "").AddInParameter("@p3", name ?? "").AddInParameter("@p4", phone ?? "")
-                    .AddInParameter("@p5", ip ?? "").AddInParameter("@p6", productType ?? LicenseProductType.Personal)
-                    .AddInParameter("@p7", LicenseStatus.Pending).AddInParameter("@p8", remark ?? "")
+                    .AddInParameter("@p5", ip ?? "").AddInParameter("@p6", productType ?? LocalLicenseProductType.Personal)
+                    .AddInParameter("@p7", LocalLicenseStatus.Pending).AddInParameter("@p8", remark ?? "")
                     .AddInParameter("@p9", DateTime.Now).ExecuteNonQuery();
                 if (count <= 0) return Task.FromResult(new DosResult(0, null, "申请记录保存失败"));
                 WriteLicenseLog(hid, LogAction.Apply, operatorName, operatorIP, $"新申请 | {company}");
-                Console.WriteLine($"Microi.License：【申请】HID={hid}");
-                return Task.FromResult(new DosResult(1, new { Status = LicenseStatus.Pending }, "申请已提交"));
+                Console.WriteLine($"Microi.LocalLicense：【申请】HID={hid}");
+                return Task.FromResult(new DosResult(1, new { Status = LocalLicenseStatus.Pending }, "申请已提交"));
             }
             catch (Exception ex) { return Task.FromResult(new DosResult(0, null, "申请失败：" + ex.Message)); }
         }
@@ -528,34 +534,34 @@ namespace Microi.License
             {
                 var expiry = expirationDate ?? DateTime.UtcNow.AddYears(1);
                 var upExpiry = updateExpirationDate ?? expiry;
-                var payload = new LicensePayload { HID = hid, Company = company ?? "", Name = name ?? "",
-                    Phone = phone ?? "", IP = ip ?? "", ProductType = productType ?? LicenseProductType.Personal,
+                var payload = new LocalLicensePayload { HID = hid, Company = company ?? "", Name = name ?? "",
+                    Phone = phone ?? "", IP = ip ?? "", ProductType = productType ?? LocalLicenseProductType.Personal,
                     IssuedAt = DateTime.UtcNow, ExpirationDate = expiry, UpdateExpirationDate = upExpiry };
                 payload.Signature = SignPayload(payload, pk);
                 if (string.IsNullOrWhiteSpace(payload.Signature)) return Task.FromResult(new DosResult(0, null, "签名失败"));
                 var lc = AesEncrypt(JsonConvert.SerializeObject(payload, Formatting.Indented), DeriveFileKey(hid));
                 var db = GetLicenseDb(); if (db == null) return Task.FromResult(new DosResult(0, null, "数据库未就绪"));
-                var existing = db.FromSql("SELECT Id FROM diy_license WHERE HID=@p0").AddInParameter("@p0", hid).First<dynamic>();
+                var existing = db.FromSql("SELECT Id FROM diy_local_license WHERE HID=@p0").AddInParameter("@p0", hid).First<dynamic>();
                 if (existing != null)
-                    db.FromSql(@"UPDATE diy_license SET Company=@p1, Name=@p2, Phone=@p3, IP=@p4, ProductType=@p5,
+                    db.FromSql(@"UPDATE diy_local_license SET Company=@p1, Name=@p2, Phone=@p3, IP=@p4, ProductType=@p5,
                         Status=@p6, LicenseContent=@p7, IssuedAt=@p8, ExpirationDate=@p9, UpdateExpirationDate=@p10, UpdateTime=@p11
                         WHERE HID=@p0").AddInParameter("@p0", hid).AddInParameter("@p1", company ?? "")
                         .AddInParameter("@p2", name ?? "").AddInParameter("@p3", phone ?? "").AddInParameter("@p4", ip ?? "")
-                        .AddInParameter("@p5", productType ?? LicenseProductType.Personal).AddInParameter("@p6", LicenseStatus.Issued)
+                        .AddInParameter("@p5", productType ?? LocalLicenseProductType.Personal).AddInParameter("@p6", LocalLicenseStatus.Issued)
                         .AddInParameter("@p7", lc).AddInParameter("@p8", payload.IssuedAt).AddInParameter("@p9", expiry)
                         .AddInParameter("@p10", upExpiry).AddInParameter("@p11", DateTime.Now).ExecuteNonQuery();
                 else
-                    db.FromSql(@"INSERT INTO diy_license (Id, HID, Company, Name, Phone, IP, ProductType, Status,
+                    db.FromSql(@"INSERT INTO diy_local_license (Id, HID, Company, Name, Phone, IP, ProductType, Status,
                         LicenseContent, IssuedAt, ExpirationDate, UpdateExpirationDate, CreateTime)
                         VALUES (@p0,@p1,@p2,@p3,@p4,@p5,@p6,@p7,@p8,@p9,@p10,@p11,@p12)")
                         .AddInParameter("@p0", Guid.NewGuid().ToString("N").ToUpperInvariant()).AddInParameter("@p1", hid)
                         .AddInParameter("@p2", company ?? "").AddInParameter("@p3", name ?? "").AddInParameter("@p4", phone ?? "")
-                        .AddInParameter("@p5", ip ?? "").AddInParameter("@p6", productType ?? LicenseProductType.Personal)
-                        .AddInParameter("@p7", LicenseStatus.Issued).AddInParameter("@p8", lc)
+                        .AddInParameter("@p5", ip ?? "").AddInParameter("@p6", productType ?? LocalLicenseProductType.Personal)
+                        .AddInParameter("@p7", LocalLicenseStatus.Issued).AddInParameter("@p8", lc)
                         .AddInParameter("@p9", payload.IssuedAt).AddInParameter("@p10", expiry)
                         .AddInParameter("@p11", upExpiry).AddInParameter("@p12", DateTime.Now).ExecuteNonQuery();
                 WriteLicenseLog(hid, LogAction.Issue, operatorName, operatorIP, $"签发 | {company} | {productType} | 到期:{expiry:yyyy-MM-dd}");
-                Console.WriteLine($"Microi.License：【签发】HID={hid} Expiry={expiry:yyyy-MM-dd}");
+                Console.WriteLine($"Microi.LocalLicense：【签发】HID={hid} Expiry={expiry:yyyy-MM-dd}");
                 return Task.FromResult(new DosResult(1, new { LicenseContent = lc }, "License签发成功（AES加密）"));
             }
             catch (Exception ex) { return Task.FromResult(new DosResult(0, null, "签发失败：" + ex.Message)); }
@@ -568,15 +574,15 @@ namespace Microi.License
             try
             {
                 var db = GetLicenseDb(); if (db == null) return Task.FromResult(new DosResult(0, null, "授权中心独立数据库未配置或不可用"));
-                var row = db.FromSql("SELECT * FROM diy_license WHERE HID=@p0").AddInParameter("@p0", hid).First<dynamic>();
+                var row = db.FromSql("SELECT * FROM diy_local_license WHERE HID=@p0").AddInParameter("@p0", hid).First<dynamic>();
                 if (row == null) return Task.FromResult(new DosResult(2, null, "未找到该HID的申请记录"));
                 var obj = JObject.FromObject(row);
                 string lc = null;
-                if (obj["Status"]?.ToString() == LicenseStatus.Issued) lc = obj["LicenseContent"]?.ToString();
+                if (obj["Status"]?.ToString() == LocalLicenseStatus.Issued) lc = obj["LicenseContent"]?.ToString();
                 var status = obj["Status"]?.ToString();
                 return Task.FromResult(new DosResult(1, new { HID = hid, Status = status,
-                    HasLicense = status == LicenseStatus.Issued && !string.IsNullOrWhiteSpace(lc),
-                    Revoked = status == LicenseStatus.Revoked,
+                    HasLicense = status == LocalLicenseStatus.Issued && !string.IsNullOrWhiteSpace(lc),
+                    Revoked = status == LocalLicenseStatus.Revoked,
                     Company = obj["Company"]?.ToString(), ProductType = obj["ProductType"]?.ToString(),
                     IssuedAt = obj["IssuedAt"]?.ToString(), ExpirationDate = obj["ExpirationDate"]?.ToString(),
                     UpdateExpirationDate = obj["UpdateExpirationDate"]?.ToString(),
@@ -594,11 +600,11 @@ namespace Microi.License
                 var db = GetLicenseDb(); if (db == null) return Task.FromResult(new DosResult(0, null, "授权中心独立数据库未配置或不可用"));
                 var row = db.FromSql(@"SELECT Id, HID, Company, Name, Phone, IP, ProductType,
                     Status, IssuedAt, ExpirationDate, UpdateExpirationDate, RejectReason, CreateTime, UpdateTime
-                    FROM diy_license WHERE HID=@p0").AddInParameter("@p0", hid).First<dynamic>();
+                    FROM diy_local_license WHERE HID=@p0").AddInParameter("@p0", hid).First<dynamic>();
                 if (row == null) return Task.FromResult(new DosResult(2, null, "未找到申请记录"));
                 var data = JObject.FromObject(row);
                 data["HasApplication"] = true;
-                data["Revoked"] = string.Equals(data["Status"]?.ToString(), LicenseStatus.Revoked, StringComparison.OrdinalIgnoreCase);
+                data["Revoked"] = string.Equals(data["Status"]?.ToString(), LocalLicenseStatus.Revoked, StringComparison.OrdinalIgnoreCase);
                 return Task.FromResult(new DosResult(1, data));
             }
             catch (Exception ex) { return Task.FromResult(new DosResult(0, null, "查询失败：" + ex.Message)); }
@@ -615,16 +621,16 @@ namespace Microi.License
                 var db = GetLicenseDb();
                 if (db == null)
                     return Task.FromResult(new DosResult(0, null, "授权中心独立数据库未配置或不可用"));
-                var row = db.FromSql("SELECT Status, ExpirationDate FROM diy_license WHERE HID=@p0")
+                var row = db.FromSql("SELECT Status, ExpirationDate FROM diy_local_license WHERE HID=@p0")
                     .AddInParameter("@p0", hid).First<dynamic>();
                 if (row == null)
                     return Task.FromResult(new DosResult(1, new { Status = "Unknown" }));
 
                 var data = JObject.FromObject(row);
                 var status = data["Status"]?.ToString();
-                if (string.Equals(status, LicenseStatus.Revoked, StringComparison.OrdinalIgnoreCase))
-                    return Task.FromResult(new DosResult(1, new { Status = LicenseStatus.Revoked }));
-                if (!string.Equals(status, LicenseStatus.Issued, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(status, LocalLicenseStatus.Revoked, StringComparison.OrdinalIgnoreCase))
+                    return Task.FromResult(new DosResult(1, new { Status = LocalLicenseStatus.Revoked }));
+                if (!string.Equals(status, LocalLicenseStatus.Issued, StringComparison.OrdinalIgnoreCase))
                     return Task.FromResult(new DosResult(1, new { Status = status ?? "Unknown" }));
 
                 var expirationDate = data["ExpirationDate"]?.Value<DateTime?>();
@@ -648,10 +654,10 @@ namespace Microi.License
             try
             {
                 var db = GetLicenseDb(); if (db == null) return new DosResult(0, null, "数据库未就绪");
-                var row = db.FromSql("SELECT * FROM diy_license WHERE HID=@p0").AddInParameter("@p0", hid).First<dynamic>();
+                var row = db.FromSql("SELECT * FROM diy_local_license WHERE HID=@p0").AddInParameter("@p0", hid).First<dynamic>();
                 if (row == null) return new DosResult(0, null, "未找到该HID的申请记录");
                 var obj = JObject.FromObject(row);
-                if (obj["Status"]?.ToString() == LicenseStatus.Issued) return new DosResult(0, null, "已签发");
+                if (obj["Status"]?.ToString() == LocalLicenseStatus.Issued) return new DosResult(0, null, "已签发");
                 var result = await IssueAsync(hid, obj["Company"]?.ToString(), obj["Name"]?.ToString(), obj["Phone"]?.ToString(),
                     obj["IP"]?.ToString(), obj["ProductType"]?.ToString(), obj["ExpirationDate"]?.Value<DateTime?>(),
                     obj["UpdateExpirationDate"]?.Value<DateTime?>(), operatorName, operatorIP);
@@ -669,13 +675,13 @@ namespace Microi.License
             try
             {
                 var db = GetLicenseDb(); if (db == null) return Task.FromResult(new DosResult(0, null, "数据库未就绪"));
-                var count = db.FromSql(@"UPDATE diy_license SET Status=@p1, RejectReason=@p2, UpdateTime=@p3
+                var count = db.FromSql(@"UPDATE diy_local_license SET Status=@p1, RejectReason=@p2, UpdateTime=@p3
                     WHERE HID=@p0 AND Status=@p4").AddInParameter("@p0", hid)
-                    .AddInParameter("@p1", LicenseStatus.Rejected).AddInParameter("@p2", rejectReason ?? "")
-                    .AddInParameter("@p3", DateTime.Now).AddInParameter("@p4", LicenseStatus.Pending).ExecuteNonQuery();
+                    .AddInParameter("@p1", LocalLicenseStatus.Rejected).AddInParameter("@p2", rejectReason ?? "")
+                    .AddInParameter("@p3", DateTime.Now).AddInParameter("@p4", LocalLicenseStatus.Pending).ExecuteNonQuery();
                 if (count <= 0) return Task.FromResult(new DosResult(0, null, "驳回失败"));
                 WriteLicenseLog(hid, LogAction.Reject, operatorName, operatorIP, $"驳回 | 原因:{rejectReason}");
-                Console.WriteLine($"Microi.License：【驳回】HID={hid}");
+                Console.WriteLine($"Microi.LocalLicense：【驳回】HID={hid}");
                 return Task.FromResult(new DosResult(1, null, "已驳回"));
             }
             catch (Exception ex) { return Task.FromResult(new DosResult(0, null, "驳回失败：" + ex.Message)); }
@@ -685,17 +691,17 @@ namespace Microi.License
         {
             if (string.IsNullOrWhiteSpace(hid)) return Task.FromResult(new DosResult(0, null, "HID不能为空"));
             hid = hid.Trim().ToUpperInvariant();
-            var ns = revoke ? LicenseStatus.Revoked : LicenseStatus.Issued;
+            var ns = revoke ? LocalLicenseStatus.Revoked : LocalLicenseStatus.Issued;
             var act = revoke ? "作废" : "恢复";
             var logAct = revoke ? LogAction.Revoke : LogAction.Restore;
             try
             {
                 var db = GetLicenseDb(); if (db == null) return Task.FromResult(new DosResult(0, null, "数据库未就绪"));
-                var count = db.FromSql("UPDATE diy_license SET Status=@p1, UpdateTime=@p2 WHERE HID=@p0")
+                var count = db.FromSql("UPDATE diy_local_license SET Status=@p1, UpdateTime=@p2 WHERE HID=@p0")
                     .AddInParameter("@p0", hid).AddInParameter("@p1", ns).AddInParameter("@p2", DateTime.Now).ExecuteNonQuery();
                 if (count <= 0) return Task.FromResult(new DosResult(0, null, $"{act}失败"));
                 WriteLicenseLog(hid, logAct, operatorName, operatorIP, act);
-                Console.WriteLine($"Microi.License：【{act}】HID={hid}");
+                Console.WriteLine($"Microi.LocalLicense：【{act}】HID={hid}");
                 return Task.FromResult(new DosResult(1, null, $"License已{act}"));
             }
             catch (Exception ex) { return Task.FromResult(new DosResult(0, null, $"{act}失败：" + ex.Message)); }
@@ -705,22 +711,23 @@ namespace Microi.License
 
         /// <summary>
         /// 获取 License 专用数据库会话。
-        /// 优先级：环境变量 MICROI_LICENSE_DB_CONN → appsettings.LicenseDbConn → 主库 OsClient
+        /// 优先级：环境变量 MICROI_LOCAL_LICENSE_DB_CONN → appsettings.LocalLicenseDbConn。
+        /// 仅兼容读取旧自定义授权键，不回退到 Microi 框架主库。
         /// </summary>
         private static DbSession GetLicenseDb()
         {
             try
             {
-                var connStr = Environment.GetEnvironmentVariable("MICROI_LICENSE_DB_CONN");
+                var connStr = GetEnvironmentValue("MICROI_LOCAL_LICENSE_DB_CONN", "MICROI_LICENSE_DB_CONN");
                 if (string.IsNullOrWhiteSpace(connStr))
-                    connStr = ConfigHelper.GetAppSettings("LicenseDbConn");
+                    connStr = GetSetting("LocalLicenseDbConn", "LicenseDbConn");
                 // 授权中心数据禁止回退到 Microi 框架库。未配置独立连接时，
                 // 签发/审核/申请等中心端能力不可用，但不影响客户侧本地验签。
                 if (string.IsNullOrWhiteSpace(connStr)) return null;
 
-                var dbTypeName = Environment.GetEnvironmentVariable("MICROI_LICENSE_DB_TYPE");
+                var dbTypeName = GetEnvironmentValue("MICROI_LOCAL_LICENSE_DB_TYPE", "MICROI_LICENSE_DB_TYPE");
                 if (string.IsNullOrWhiteSpace(dbTypeName))
-                    dbTypeName = ConfigHelper.GetAppSettings("LicenseDbType");
+                    dbTypeName = GetSetting("LocalLicenseDbType", "LicenseDbType");
 
                 DatabaseType dbType;
                 if (!string.IsNullOrWhiteSpace(dbTypeName))
@@ -735,7 +742,7 @@ namespace Microi.License
                 }
 
                 var db = new DbSession(dbType, connStr);
-                LicenseDatabaseInitializer.Ensure(db, dbTypeName, connStr);
+                LocalLicenseDatabaseInitializer.Ensure(db, dbTypeName, connStr);
                 return db;
             }
             catch (Exception ex)
@@ -745,10 +752,10 @@ namespace Microi.License
             }
         }
 
-        /// <summary>确保 diy_license_log 表存在（自动建表）</summary>
+        /// <summary>确保 diy_local_license_log 表存在（自动建表）</summary>
         private static void EnsureLogTable(DbSession db)
         {
-            // GetLicenseDb 已通过底座 DDL 初始化 diy_license_log。
+            // GetLicenseDb 已通过底座 DDL 初始化 diy_local_license_log。
         }
 
         /// <summary>写入操作日志</summary>
@@ -758,7 +765,7 @@ namespace Microi.License
             {
                 var db = GetLicenseDb(); if (db == null) return;
                 EnsureLogTable(db);
-                db.FromSql(@"INSERT INTO diy_license_log (Id, HID, Action, Operator, OperatorIP, Detail, CreateTime)
+                db.FromSql(@"INSERT INTO diy_local_license_log (Id, HID, Action, Operator, OperatorIP, Detail, CreateTime)
                     VALUES (@p0, @p1, @p2, @p3, @p4, @p5, @p6)")
                     .AddInParameter("@p0", Guid.NewGuid().ToString("N").ToUpperInvariant())
                     .AddInParameter("@p1", (hid ?? "").Trim().ToUpperInvariant())
@@ -782,8 +789,8 @@ namespace Microi.License
             {
                 var db = GetLicenseDb(); if (db == null) return new DosResult(0, null, "数据库未就绪");
                 var where = string.IsNullOrWhiteSpace(status) ? "1=1" : "Status=@status";
-                var sql = $"SELECT * FROM diy_license WHERE {where} AND HID NOT LIKE '@__LICENSE_%' ORDER BY UpdateTime DESC, CreateTime DESC";
-                var countSql = $"SELECT COUNT(*) FROM diy_license WHERE {where} AND HID NOT LIKE '@__LICENSE_%'";
+                var sql = $"SELECT * FROM diy_local_license WHERE {where} AND HID NOT LIKE '@__LICENSE_%' ORDER BY UpdateTime DESC, CreateTime DESC";
+                var countSql = $"SELECT COUNT(*) FROM diy_local_license WHERE {where} AND HID NOT LIKE '@__LICENSE_%'";
                 var cmd = db.FromSql(sql);
                 var countCmd = db.FromSql(countSql);
                 if (!string.IsNullOrWhiteSpace(status))
@@ -806,8 +813,8 @@ namespace Microi.License
                 var db = GetLicenseDb(); if (db == null) return new DosResult(0, null, "数据库未就绪");
                 EnsureLogTable(db);
                 var where = string.IsNullOrWhiteSpace(hid) ? "1=1" : "HID=@hid";
-                var sql = $"SELECT * FROM diy_license_log WHERE {where} ORDER BY CreateTime DESC";
-                var countSql = $"SELECT COUNT(*) FROM diy_license_log WHERE {where}";
+                var sql = $"SELECT * FROM diy_local_license_log WHERE {where} ORDER BY CreateTime DESC";
+                var countSql = $"SELECT COUNT(*) FROM diy_local_license_log WHERE {where}";
                 var cmd = db.FromSql(sql);
                 var countCmd = db.FromSql(countSql);
                 if (!string.IsNullOrWhiteSpace(hid))
@@ -824,27 +831,27 @@ namespace Microi.License
 
         // ======================== 内部实现 ========================
 
-        private static LicenseVerifyResult VerifyInternal()
+        private static LocalLicenseVerifyResult VerifyInternal()
         {
             var path = GetLicensePath();
-            if (!File.Exists(path)) return new LicenseVerifyResult { Valid = false, IsGracePeriod = _isGracePeriod, Message = "License文件不存在" };
+            if (!File.Exists(path)) return new LocalLicenseVerifyResult { Valid = false, IsGracePeriod = _isGracePeriod, Message = "License文件不存在" };
             try
             {
                 var raw = File.ReadAllText(path, Encoding.UTF8);
                 var content = IsEncrypted(raw) ? AesDecrypt(raw, DeriveFileKey(GetHardwareId())) : raw;
                 if (content == null) return Fail("License文件解密失败");
-                var payload = JsonConvert.DeserializeObject<LicensePayload>(content);
+                var payload = JsonConvert.DeserializeObject<LocalLicensePayload>(content);
                 if (payload == null) return Fail("License文件格式无效");
                 var curHid = GetHardwareId();
                 if (!string.Equals(payload.HID, curHid, StringComparison.OrdinalIgnoreCase))
                     return Fail($"License与当前服务器不匹配（当前HID={curHid}）");
                 if (!VerifySignature(payload)) return Fail("License签名验证失败");
                 var daysLeft = (int)(payload.ExpirationDate.ToUniversalTime() - DateTime.UtcNow).TotalDays;
-                if (daysLeft < 0) return new LicenseVerifyResult { Valid = false, HID = payload.HID, Company = payload.Company,
+                if (daysLeft < 0) return new LocalLicenseVerifyResult { Valid = false, HID = payload.HID, Company = payload.Company,
                     ProductType = payload.ProductType, ExpirationDate = payload.ExpirationDate,
                     UpdateExpirationDate = payload.UpdateExpirationDate, DaysRemaining = daysLeft,
                     IsGracePeriod = _isGracePeriod, Message = $"License已于 {payload.ExpirationDate:yyyy-MM-dd} 到期" };
-                return new LicenseVerifyResult { Valid = true, HID = payload.HID, Company = payload.Company,
+                return new LocalLicenseVerifyResult { Valid = true, HID = payload.HID, Company = payload.Company,
                     ProductType = payload.ProductType, ExpirationDate = payload.ExpirationDate,
                     UpdateExpirationDate = payload.UpdateExpirationDate,
                     IssuedDate = payload.IssuedAt.ToString("yyyy-MM-dd HH:mm:ss"),
@@ -853,10 +860,10 @@ namespace Microi.License
             catch (Exception ex) { return Fail("License验证异常：" + ex.Message); }
         }
 
-        private static LicenseVerifyResult Fail(string msg) =>
-            new LicenseVerifyResult { Valid = false, IsGracePeriod = _isGracePeriod, Message = msg };
+        private static LocalLicenseVerifyResult Fail(string msg) =>
+            new LocalLicenseVerifyResult { Valid = false, IsGracePeriod = _isGracePeriod, Message = msg };
 
-        private static string SignPayload(LicensePayload payload, string privateKeyBase64)
+        private static string SignPayload(LocalLicensePayload payload, string privateKeyBase64)
         {
             try
             {
@@ -865,10 +872,10 @@ namespace Microi.License
                 rsa.ImportPkcs8PrivateKey(Convert.FromBase64String(privateKeyBase64.Trim()), out _);
                 return Convert.ToBase64String(rsa.SignData(data, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1));
             }
-            catch (Exception ex) { Console.WriteLine($"Microi.License：【签名失败】{ex.Message}"); return null; }
+            catch (Exception ex) { Console.WriteLine($"Microi.LocalLicense：【签名失败】{ex.Message}"); return null; }
         }
 
-        private static bool VerifySignature(LicensePayload payload)
+        private static bool VerifySignature(LocalLicensePayload payload)
         {
             try
             {
@@ -883,7 +890,7 @@ namespace Microi.License
             catch { return false; }
         }
 
-        private static string GetCanonicalPayload(LicensePayload payload) =>
+        private static string GetCanonicalPayload(LocalLicensePayload payload) =>
             JsonConvert.SerializeObject(new { payload.Company, payload.ExpirationDate, payload.HID, payload.IP,
                 payload.IssuedAt, payload.Name, payload.Phone, payload.ProductType, payload.UpdateExpirationDate },
                 new JsonSerializerSettings { DateFormatString = "yyyy-MM-ddTHH:mm:ssZ" });
@@ -900,14 +907,14 @@ namespace Microi.License
 
         private static byte[] DeriveDbKey()
         {
-            var ek = Environment.GetEnvironmentVariable("MICROI_LICENSE_ENCRYPT_KEY");
+            var ek = GetEnvironmentValue("MICROI_LOCAL_LICENSE_ENCRYPT_KEY", "MICROI_LICENSE_ENCRYPT_KEY");
             if (string.IsNullOrWhiteSpace(ek))
             {
-                Console.Error.WriteLine("Microi.License：【❌严重】环境变量 MICROI_LICENSE_ENCRYPT_KEY 未设置！");
+                Console.Error.WriteLine("Microi.LocalLicense：【❌严重】环境变量 MICROI_LOCAL_LICENSE_ENCRYPT_KEY 未设置！");
                 Console.Error.WriteLine("  请设置一个 32 字符以上的随机字符串作为数据库加密密钥。");
-                Console.Error.WriteLine("  示例（Linux ）：export MICROI_LICENSE_ENCRYPT_KEY=\"your-random-32-char-string-here\"");
-                Console.Error.WriteLine("  示例（Windows）：$env:MICROI_LICENSE_ENCRYPT_KEY = \"your-random-32-char-string-here\"");
-                throw new InvalidOperationException("MICROI_LICENSE_ENCRYPT_KEY 环境变量未设置，无法启动。");
+                Console.Error.WriteLine("  示例（Linux ）：export MICROI_LOCAL_LICENSE_ENCRYPT_KEY=\"your-random-32-char-string-here\"");
+                Console.Error.WriteLine("  示例（Windows）：$env:MICROI_LOCAL_LICENSE_ENCRYPT_KEY = \"your-random-32-char-string-here\"");
+                throw new InvalidOperationException("MICROI_LOCAL_LICENSE_ENCRYPT_KEY 环境变量未设置，无法启动。");
             }
             using var derive = new Rfc2898DeriveBytes(
                 Encoding.UTF8.GetBytes(ek),
@@ -948,7 +955,7 @@ namespace Microi.License
 
         private static string ComputeProofHmac(string hid, string expStr)
         {
-            var key = HardwareHelper.Sha256Hex(hid + "microi-valid-proof-2026");
+            var key = LocalLicenseHardwareHelper.Sha256Hex(hid + "microi-valid-proof-2026");
             using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(key));
             return BitConverter.ToString(hmac.ComputeHash(Encoding.UTF8.GetBytes(expStr + hid))).Replace("-", "").ToLowerInvariant();
         }
@@ -984,7 +991,7 @@ namespace Microi.License
         {
             try
             {
-                var proofPath = Path.Combine(AppContext.BaseDirectory, ValidProofFileName);
+                var proofPath = GetDataPath(ValidProofFileName, LegacyValidProofFileName);
                 if (!File.Exists(proofPath)) return null;
                 var rc = File.ReadAllText(proofPath, Encoding.UTF8).Trim();
                 if (string.IsNullOrWhiteSpace(rc)) return null;
@@ -999,30 +1006,93 @@ namespace Microi.License
             catch { return null; }
         }
 
-        private static string GetLicensePath() => Path.Combine(AppContext.BaseDirectory, LicenseFileName);
+        private static string GetLicensePath() => GetDataPath(LicenseFileName, LegacyLicenseFileName);
 
         private static string GetPrivateKey()
         {
-            var ek = Environment.GetEnvironmentVariable("MICROI_LICENSE_PRIVATE_KEY");
+            var ek = GetEnvironmentValue("MICROI_LOCAL_LICENSE_PRIVATE_KEY", "MICROI_LICENSE_PRIVATE_KEY");
             if (!string.IsNullOrWhiteSpace(ek)) return ek.Trim();
-            var fp = Path.Combine(AppContext.BaseDirectory, PrivateKeyFileName);
+            var fp = GetDataPath(PrivateKeyFileName, LegacyPrivateKeyFileName);
             return File.Exists(fp) ? ExtractBase64FromPem(File.ReadAllText(fp).Trim()) : null;
         }
 
         private static string GetPublicKey()
         {
-            var ek = Environment.GetEnvironmentVariable("MICROI_LICENSE_PUBLIC_KEY");
+            var ek = GetEnvironmentValue("MICROI_LOCAL_LICENSE_PUBLIC_KEY", "MICROI_LICENSE_PUBLIC_KEY");
             if (!string.IsNullOrWhiteSpace(ek)) return ek.Trim();
-            var fp = Path.Combine(AppContext.BaseDirectory, PublicKeyFileName);
+            var fp = GetDataPath(PublicKeyFileName, LegacyPublicKeyFileName);
             return File.Exists(fp) ? ExtractBase64FromPem(File.ReadAllText(fp).Trim()) : DefaultPublicKeyBase64;
         }
 
         private static string GetPublicKeySource()
         {
+            if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("MICROI_LOCAL_LICENSE_PUBLIC_KEY")))
+                return "环境变量 MICROI_LOCAL_LICENSE_PUBLIC_KEY";
             if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("MICROI_LICENSE_PUBLIC_KEY")))
-                return "环境变量 MICROI_LICENSE_PUBLIC_KEY";
+                return "兼容环境变量 MICROI_LICENSE_PUBLIC_KEY";
             if (File.Exists(Path.Combine(AppContext.BaseDirectory, PublicKeyFileName))) return $"文件 {PublicKeyFileName}";
+            if (File.Exists(Path.Combine(AppContext.BaseDirectory, LegacyPublicKeyFileName)))
+                return $"兼容文件 {LegacyPublicKeyFileName}";
             return "内嵌常量 DefaultPublicKeyBase64（未替换=无法验证）";
+        }
+
+        private static string GetEnvironmentValue(string key, string legacyKey)
+        {
+            var value = Environment.GetEnvironmentVariable(key);
+            if (!string.IsNullOrWhiteSpace(value)) return value;
+
+            value = Environment.GetEnvironmentVariable(legacyKey);
+            if (!string.IsNullOrWhiteSpace(value))
+                LogLegacyFallback(legacyKey, key);
+            return value;
+        }
+
+        private static string GetSetting(string key, string legacyKey)
+        {
+            string value = ConfigHelper.GetAppSettings(key);
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                value = ConfigHelper.GetAppSettings(legacyKey);
+                if (!string.IsNullOrWhiteSpace(value))
+                    LogLegacyFallback(legacyKey, key);
+            }
+            return string.IsNullOrWhiteSpace(value) ? null : value;
+        }
+
+        private static void LogLegacyFallback(string legacyName, string newName)
+        {
+            var warningKey = legacyName + "->" + newName;
+            if (LegacyFallbackWarnings.TryAdd(warningKey, 0))
+                Console.WriteLine($"Microi.LocalLicense：【兼容迁移】检测到旧配置 {legacyName}，请迁移为 {newName}。");
+        }
+
+        /// <summary>
+        /// 首次访问时把旧文件复制到新名称。复制后保留旧文件，避免升级失败造成不可逆丢失。
+        /// 加密前缀、密钥派生盐和签名规范保持不变，因此历史已签发文件可继续验签。
+        /// </summary>
+        private static string GetDataPath(string fileName, string legacyFileName)
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, fileName);
+            if (File.Exists(path)) return path;
+
+            var legacyPath = Path.Combine(AppContext.BaseDirectory, legacyFileName);
+            if (!File.Exists(legacyPath)) return path;
+
+            try
+            {
+                File.Copy(legacyPath, path, false);
+                if (new FileInfo(path).Length != new FileInfo(legacyPath).Length)
+                {
+                    File.Delete(path);
+                    return legacyPath;
+                }
+                Console.WriteLine($"Microi.LocalLicense：【兼容迁移】已将旧授权文件 {legacyFileName} 复制为 {fileName}，旧文件已保留。");
+                return path;
+            }
+            catch
+            {
+                return legacyPath;
+            }
         }
 
         private static string ExtractBase64FromPem(string pem) =>
